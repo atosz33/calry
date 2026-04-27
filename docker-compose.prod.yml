@@ -1,0 +1,24 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: calry-backend
+    restart: unless-stopped
+    volumes:
+      - ./data:/data
+    environment:
+      DATABASE_URL: sqlite:////data/calry.db
+    expose:
+      - "5001"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: /api
+    container_name: calry-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:8081:8081"
