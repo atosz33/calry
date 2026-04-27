@@ -11,7 +11,6 @@ from .database import get_db, init_db
 from .models import Ingredient, LoginAudit, MealEntry, Recipe, RecipeIngredient, User
 from .schemas import (
     AuthResponse,
-    AdminIngredientCreate,
     AdminIngredientRead,
     AdminMealEntryRead,
     AdminRecipeRead,
@@ -143,10 +142,8 @@ def get_owned_recipe(recipe_id: int, current_user: User, db: Session) -> Recipe:
     return recipe
 
 
-def get_owned_ingredient(ingredient_id: int, current_user: User, db: Session) -> Ingredient:
-    ingredient = db.scalar(
-        select(Ingredient).where(Ingredient.id == ingredient_id, Ingredient.user_id == current_user.id)
-    )
+def get_ingredient(ingredient_id: int, db: Session) -> Ingredient:
+    ingredient = db.get(Ingredient, ingredient_id)
     if not ingredient:
         raise HTTPException(status_code=404, detail="Ingredient not found")
     return ingredient
@@ -349,25 +346,16 @@ def admin_list_ingredients(
 
 @app.post("/admin/ingredients", response_model=AdminIngredientRead, status_code=201)
 def admin_create_ingredient(
-    payload: AdminIngredientCreate,
+    payload: IngredientCreate,
     db: Session = Depends(get_db),
     current_admin: User = Depends(get_current_admin),
 ) -> AdminIngredientRead:
-    user = db.get(User, payload.user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    duplicate = db.scalar(
-        select(Ingredient).where(
-            Ingredient.name.ilike(payload.name),
-            Ingredient.user_id == payload.user_id,
-        )
-    )
+    duplicate = db.scalar(select(Ingredient).where(Ingredient.name.ilike(payload.name)))
     if duplicate:
-        raise HTTPException(status_code=400, detail="Ingredient already exists for this user")
+        raise HTTPException(status_code=400, detail="Ingredient already exists")
 
     ingredient = Ingredient(
-        user_id=payload.user_id,
+        user_id=current_admin.id,
         name=payload.name,
         calories_per_100g=payload.calories_per_100g,
     )
@@ -376,12 +364,12 @@ def admin_create_ingredient(
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(status_code=400, detail="Ingredient already exists for this user")
+        raise HTTPException(status_code=400, detail="Ingredient already exists")
     db.refresh(ingredient)
     return AdminIngredientRead(
         id=ingredient.id,
         user_id=ingredient.user_id,
-        user_email=user.email,
+        user_email=current_admin.email,
         name=ingredient.name,
         calories_per_100g=ingredient.calories_per_100g,
         created_at=ingredient.created_at,
@@ -489,7 +477,6 @@ def list_ingredients(
 ) -> list[Ingredient]:
     return db.scalars(
         select(Ingredient)
-        .where(Ingredient.user_id == current_user.id)
         .order_by(Ingredient.name.asc())
     ).all()
 
@@ -501,7 +488,7 @@ def create_ingredient(
     current_user: User = Depends(get_current_user),
 ) -> Ingredient:
     existing = db.scalar(select(Ingredient).where(Ingredient.name.ilike(payload.name)))
-    if existing and existing.user_id == current_user.id:
+    if existing:
         raise HTTPException(status_code=400, detail="Ingredient already exists")
 
     ingredient = Ingredient(**payload.model_dump(), user_id=current_user.id)
@@ -522,11 +509,10 @@ def update_ingredient(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Ingredient:
-    ingredient = get_owned_ingredient(ingredient_id, current_user, db)
+    ingredient = get_ingredient(ingredient_id, db)
     duplicate = db.scalar(
         select(Ingredient).where(
             Ingredient.name.ilike(payload.name),
-            Ingredient.user_id == current_user.id,
             Ingredient.id != ingredient_id,
         )
     )
@@ -551,13 +537,12 @@ def delete_ingredient(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
-    ingredient = get_owned_ingredient(ingredient_id, current_user, db)
+    ingredient = get_ingredient(ingredient_id, db)
     linked_recipes = db.scalars(
         select(Recipe.name)
         .join(RecipeIngredient, Recipe.id == RecipeIngredient.recipe_id)
         .where(
             RecipeIngredient.ingredient_id == ingredient_id,
-            Recipe.user_id == current_user.id,
         )
         .order_by(Recipe.name.asc())
     ).all()
@@ -599,7 +584,7 @@ def create_recipe(
 
     ingredient_ids = [item.ingredient_id for item in payload.ingredients]
     ingredients = db.scalars(
-        select(Ingredient).where(Ingredient.id.in_(ingredient_ids), Ingredient.user_id == current_user.id)
+        select(Ingredient).where(Ingredient.id.in_(ingredient_ids))
     ).all()
     ingredient_map = {ingredient.id: ingredient for ingredient in ingredients}
 
@@ -658,7 +643,7 @@ def update_recipe(
 
     ingredient_ids = [item.ingredient_id for item in payload.ingredients]
     ingredients = db.scalars(
-        select(Ingredient).where(Ingredient.id.in_(ingredient_ids), Ingredient.user_id == current_user.id)
+        select(Ingredient).where(Ingredient.id.in_(ingredient_ids))
     ).all()
     ingredient_map = {ingredient.id: ingredient for ingredient in ingredients}
     missing_ids = [ingredient_id for ingredient_id in ingredient_ids if ingredient_id not in ingredient_map]

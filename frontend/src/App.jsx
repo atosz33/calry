@@ -40,7 +40,6 @@ const emptyIngredientForm = {
 };
 
 const emptyAdminIngredientForm = {
-  user_id: "",
   name: "",
   calories_per_100g: "",
 };
@@ -219,10 +218,6 @@ function App() {
       recipes: adminRecipes,
       mealEntries: adminMealEntries,
     });
-    setAdminIngredientForm((current) => ({
-      ...current,
-      user_id: current.user_id || (users[0] ? String(users[0].id) : ""),
-    }));
   }
 
   async function refreshDashboardAndReports(date) {
@@ -330,14 +325,10 @@ function App() {
     setError("");
     try {
       await api.adminCreateIngredient({
-        user_id: Number(adminIngredientForm.user_id),
         name: adminIngredientForm.name,
         calories_per_100g: Number(adminIngredientForm.calories_per_100g),
       });
-      setAdminIngredientForm({
-        ...emptyAdminIngredientForm,
-        user_id: adminIngredientForm.user_id,
-      });
+      setAdminIngredientForm(emptyAdminIngredientForm);
       await refreshAdminData();
       await refreshCoreData();
       setAdminSection("ingredients");
@@ -548,13 +539,15 @@ function App() {
   function logout(reason = "") {
     api.setToken("");
     setUser(null);
+    setAuthMode("login");
+    setAuthForm(emptyAuthForm);
     setDashboard(null);
     setReports({});
     setAuditLogs([]);
     setIngredients([]);
     setRecipes([]);
     setAdminData({ users: [], ingredients: [], recipes: [], mealEntries: [] });
-    setError(reason);
+    setError(typeof reason === "string" ? reason : "");
     setCurrentView("overview");
   }
 
@@ -1269,7 +1262,7 @@ function App() {
           <button type="button" className="ghost-button footer-action-button" onClick={() => setCurrentView("reports")}>
             {t("common.report")}
           </button>
-          <button type="button" className="ghost-button footer-action-button" onClick={logout}>
+          <button type="button" className="ghost-button footer-action-button" onClick={() => logout()}>
             {t("common.logOut")}
           </button>
           {user.is_admin ? (
@@ -1357,22 +1350,6 @@ function AdminPanel({
             <aside className="side-column">
               <Panel title={t("admin.addIngredient")} subtitle={t("admin.addIngredientSubtitle")}>
                 <form className="stack-form" onSubmit={onIngredientSubmit}>
-                  <Field label={t("admin.owner")}>
-                    <select
-                      value={ingredientForm.user_id}
-                      onChange={(event) =>
-                        setIngredientForm({ ...ingredientForm, user_id: event.target.value })
-                      }
-                      required
-                    >
-                      <option value="">{t("admin.selectUser")}</option>
-                      {data.users.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.email}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
                   <Field label={t("fields.ingredientName")}>
                     <input
                       placeholder={t("placeholders.ingredientName")}

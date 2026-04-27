@@ -88,10 +88,6 @@ class IngredientRead(IngredientCreate):
     model_config = ConfigDict(from_attributes=True)
 
 
-class AdminIngredientCreate(IngredientCreate):
-    user_id: int
-
-
 class AdminIngredientRead(IngredientRead):
     user_id: int | None
     user_email: str | None

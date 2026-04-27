@@ -183,7 +183,7 @@ const en = {
     recipesSubtitle: "All recipes across users",
     mealsSubtitle: "Recent meal entries",
     addIngredient: "Add ingredient",
-    addIngredientSubtitle: "Choose which user owns the ingredient",
+    addIngredientSubtitle: "Shared ingredient, visible to every user",
     owner: "Owner",
     selectUser: "Select user",
     role: "Role",

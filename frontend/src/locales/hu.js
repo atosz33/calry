@@ -183,7 +183,7 @@ const hu = {
     recipesSubtitle: "Osszes user receptjei",
     mealsSubtitle: "Legutobbi etkezes bejegyzesek",
     addIngredient: "Hozzavalo hozzaadasa",
-    addIngredientSubtitle: "Valaszd ki, melyik userhez keruljon",
+    addIngredientSubtitle: "Kozos hozzavalo, minden user latni fogja",
     owner: "Tulajdonos",
     selectUser: "Valassz usert",
     role: "Jogosultsag",

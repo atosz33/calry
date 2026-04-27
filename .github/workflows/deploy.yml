@@ -29,6 +29,16 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
 
+      - name: Prepare persistent data
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PASSWORD: ${{ secrets.DEPLOY_PASSWORD }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          sshpass -p "$DEPLOY_PASSWORD" ssh "$DEPLOY_USER@$DEPLOY_HOST" \
+            "mkdir -p '$DEPLOY_PATH/data' '$DEPLOY_PATH/backups' && if [ -f '$DEPLOY_PATH/data/calry.db' ]; then cp -p '$DEPLOY_PATH/data/calry.db' '$DEPLOY_PATH/backups/calry.db.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.bak'; fi"
+
       - name: Sync application files
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
@@ -36,14 +46,12 @@ jobs:
           DEPLOY_PASSWORD: ${{ secrets.DEPLOY_PASSWORD }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
         run: |
-          sshpass -p "$DEPLOY_PASSWORD" ssh "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH/data'"
-          sshpass -p "$DEPLOY_PASSWORD" rsync -az --delete \
-            --filter "protect /data/***" \
+          sshpass -p "$DEPLOY_PASSWORD" rsync -az \
             --exclude ".git/" \
             --exclude ".env.deployment" \
             --exclude "*.swp" \
-            --exclude "data/" \
-            --exclude "backend/data/" \
+            --exclude "data/***" \
+            --exclude "backend/data/***" \
             --exclude "node_modules/" \
             --exclude "dist/" \
             --exclude "__pycache__/" \
