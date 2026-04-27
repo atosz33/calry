@@ -42,6 +42,8 @@ def migrate_legacy_schema() -> None:
             statements.append("ALTER TABLE users ADD COLUMN password_hash VARCHAR(255)")
         if "auth_token" not in user_columns:
             statements.append("ALTER TABLE users ADD COLUMN auth_token VARCHAR(255)")
+        if "is_admin" not in user_columns:
+            statements.append("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT 0")
         if "failed_login_attempts" not in user_columns:
             statements.append("ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER DEFAULT 0")
         if "locked_until" not in user_columns:

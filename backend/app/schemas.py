@@ -30,6 +30,7 @@ class UserUpdate(UserBase):
 
 class UserRead(UserBase):
     id: int
+    is_admin: bool
     created_at: datetime
     daily_calorie_target: int
     estimated_daily_calories: int
@@ -53,6 +54,24 @@ class LoginAuditRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AdminUserRead(UserRead):
+    ingredient_count: int
+    recipe_count: int
+    meal_entry_count: int
+
+
+class AdminRecipeRead(BaseModel):
+    id: int
+    user_id: int | None
+    user_email: str | None
+    name: str
+    total_yield_grams: float
+    total_calories: float
+    calories_per_100g: float
+    ingredient_count: int
+    created_at: datetime
+
+
 class IngredientCreate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     calories_per_100g: float = Field(ge=0)
@@ -67,6 +86,15 @@ class IngredientRead(IngredientCreate):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class AdminIngredientCreate(IngredientCreate):
+    user_id: int
+
+
+class AdminIngredientRead(IngredientRead):
+    user_id: int | None
+    user_email: str | None
 
 
 class RecipeIngredientCreate(BaseModel):
@@ -124,6 +152,10 @@ class MealEntryRead(BaseModel):
     calories: float
     note: str | None
     created_at: datetime
+
+
+class AdminMealEntryRead(MealEntryRead):
+    user_email: str | None
 
 
 class MealGroupRead(BaseModel):

@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -11,6 +11,11 @@ from .database import get_db, init_db
 from .models import Ingredient, LoginAudit, MealEntry, Recipe, RecipeIngredient, User
 from .schemas import (
     AuthResponse,
+    AdminIngredientCreate,
+    AdminIngredientRead,
+    AdminMealEntryRead,
+    AdminRecipeRead,
+    AdminUserRead,
     DailySummaryRead,
     DeficitReportRead,
     IngredientCreate,
@@ -71,6 +76,7 @@ def serialize_user(user: User) -> UserRead:
         id=user.id,
         name=user.name,
         email=user.email,
+        is_admin=bool(user.is_admin),
         gender=user.gender,
         weight_kg=user.weight_kg,
         height_cm=user.height_cm,
@@ -113,6 +119,12 @@ def get_current_user(
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     return user
+
+
+def get_current_admin(current_user: User = Depends(get_current_user)) -> User:
+    if not current_user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    return current_user
 
 
 def get_owned_recipe(recipe_id: int, current_user: User, db: Session) -> Recipe:
@@ -283,6 +295,146 @@ def update_me(
     db.commit()
     db.refresh(current_user)
     return serialize_user(current_user)
+
+
+@app.get("/admin/users", response_model=list[AdminUserRead])
+def admin_list_users(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+) -> list[AdminUserRead]:
+    users = db.scalars(select(User).order_by(User.created_at.desc())).all()
+    ingredient_counts = dict(
+        db.execute(select(Ingredient.user_id, func.count(Ingredient.id)).group_by(Ingredient.user_id)).all()
+    )
+    recipe_counts = dict(
+        db.execute(select(Recipe.user_id, func.count(Recipe.id)).group_by(Recipe.user_id)).all()
+    )
+    meal_counts = dict(
+        db.execute(select(MealEntry.user_id, func.count(MealEntry.id)).group_by(MealEntry.user_id)).all()
+    )
+
+    return [
+        AdminUserRead(
+            **serialize_user(user).model_dump(),
+            ingredient_count=ingredient_counts.get(user.id, 0),
+            recipe_count=recipe_counts.get(user.id, 0),
+            meal_entry_count=meal_counts.get(user.id, 0),
+        )
+        for user in users
+    ]
+
+
+@app.get("/admin/ingredients", response_model=list[AdminIngredientRead])
+def admin_list_ingredients(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+) -> list[AdminIngredientRead]:
+    rows = db.execute(
+        select(Ingredient, User.email)
+        .outerjoin(User, Ingredient.user_id == User.id)
+        .order_by(Ingredient.created_at.desc())
+    ).all()
+    return [
+        AdminIngredientRead(
+            id=ingredient.id,
+            user_id=ingredient.user_id,
+            user_email=email,
+            name=ingredient.name,
+            calories_per_100g=ingredient.calories_per_100g,
+            created_at=ingredient.created_at,
+        )
+        for ingredient, email in rows
+    ]
+
+
+@app.post("/admin/ingredients", response_model=AdminIngredientRead, status_code=201)
+def admin_create_ingredient(
+    payload: AdminIngredientCreate,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+) -> AdminIngredientRead:
+    user = db.get(User, payload.user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    duplicate = db.scalar(
+        select(Ingredient).where(
+            Ingredient.name.ilike(payload.name),
+            Ingredient.user_id == payload.user_id,
+        )
+    )
+    if duplicate:
+        raise HTTPException(status_code=400, detail="Ingredient already exists for this user")
+
+    ingredient = Ingredient(
+        user_id=payload.user_id,
+        name=payload.name,
+        calories_per_100g=payload.calories_per_100g,
+    )
+    db.add(ingredient)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Ingredient already exists for this user")
+    db.refresh(ingredient)
+    return AdminIngredientRead(
+        id=ingredient.id,
+        user_id=ingredient.user_id,
+        user_email=user.email,
+        name=ingredient.name,
+        calories_per_100g=ingredient.calories_per_100g,
+        created_at=ingredient.created_at,
+    )
+
+
+@app.get("/admin/recipes", response_model=list[AdminRecipeRead])
+def admin_list_recipes(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+) -> list[AdminRecipeRead]:
+    rows = db.execute(
+        select(Recipe, User.email)
+        .outerjoin(User, Recipe.user_id == User.id)
+        .options(joinedload(Recipe.ingredients).joinedload(RecipeIngredient.ingredient))
+        .order_by(Recipe.created_at.desc())
+    ).unique().all()
+    items = []
+    for recipe, email in rows:
+        serialized = serialize_recipe(recipe)
+        items.append(
+            AdminRecipeRead(
+                id=recipe.id,
+                user_id=recipe.user_id,
+                user_email=email,
+                name=recipe.name,
+                total_yield_grams=recipe.total_yield_grams,
+                total_calories=serialized.total_calories,
+                calories_per_100g=serialized.calories_per_100g,
+                ingredient_count=len(recipe.ingredients),
+                created_at=recipe.created_at,
+            )
+        )
+    return items
+
+
+@app.get("/admin/meal-entries", response_model=list[AdminMealEntryRead])
+def admin_list_meal_entries(
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+) -> list[AdminMealEntryRead]:
+    rows = db.execute(
+        select(MealEntry, User.email)
+        .join(User, MealEntry.user_id == User.id)
+        .options(joinedload(MealEntry.recipe).joinedload(Recipe.ingredients).joinedload(RecipeIngredient.ingredient))
+        .order_by(MealEntry.created_at.desc())
+        .limit(limit)
+    ).unique().all()
+    return [
+        AdminMealEntryRead(**serialize_meal_entry(entry).model_dump(), user_email=email)
+        for entry, email in rows
+    ]
 
 
 @app.get("/users/me/dashboard", response_model=DailySummaryRead)

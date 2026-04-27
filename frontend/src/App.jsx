@@ -39,6 +39,12 @@ const emptyIngredientForm = {
   calories_per_100g: "",
 };
 
+const emptyAdminIngredientForm = {
+  user_id: "",
+  name: "",
+  calories_per_100g: "",
+};
+
 const emptyRecipeLine = {
   ingredient_id: "",
   amount_grams: "",
@@ -75,10 +81,18 @@ function App() {
   const [dashboard, setDashboard] = useState(null);
   const [reports, setReports] = useState({});
   const [auditLogs, setAuditLogs] = useState([]);
+  const [adminData, setAdminData] = useState({
+    users: [],
+    ingredients: [],
+    recipes: [],
+    mealEntries: [],
+  });
+  const [adminSection, setAdminSection] = useState("users");
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10));
   const [currentView, setCurrentView] = useState("overview");
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [ingredientForm, setIngredientForm] = useState(emptyIngredientForm);
+  const [adminIngredientForm, setAdminIngredientForm] = useState(emptyAdminIngredientForm);
   const [recipeForm, setRecipeForm] = useState(emptyRecipeForm);
   const [mealForm, setMealForm] = useState(emptyMealForm);
   const [editingIngredientId, setEditingIngredientId] = useState(null);
@@ -188,6 +202,29 @@ function App() {
     await refreshDashboardAndReports(selectedDate);
   }
 
+  async function refreshAdminData() {
+    if (!user?.is_admin) {
+      return;
+    }
+
+    const [users, adminIngredients, adminRecipes, adminMealEntries] = await Promise.all([
+      api.adminListUsers(),
+      api.adminListIngredients(),
+      api.adminListRecipes(),
+      api.adminListMealEntries(),
+    ]);
+    setAdminData({
+      users,
+      ingredients: adminIngredients,
+      recipes: adminRecipes,
+      mealEntries: adminMealEntries,
+    });
+    setAdminIngredientForm((current) => ({
+      ...current,
+      user_id: current.user_id || (users[0] ? String(users[0].id) : ""),
+    }));
+  }
+
   async function refreshDashboardAndReports(date) {
     const [dashboardData, report7, report30, report90] = await Promise.all([
       api.getDashboard(date),
@@ -280,6 +317,30 @@ function App() {
       resetIngredientForm();
       await refreshCoreData();
       setCurrentView("ingredients");
+    } catch (submitError) {
+      setError(submitError.message);
+    } finally {
+      setSubmitting("");
+    }
+  }
+
+  async function handleAdminIngredientSubmit(event) {
+    event.preventDefault();
+    setSubmitting("adminIngredient");
+    setError("");
+    try {
+      await api.adminCreateIngredient({
+        user_id: Number(adminIngredientForm.user_id),
+        name: adminIngredientForm.name,
+        calories_per_100g: Number(adminIngredientForm.calories_per_100g),
+      });
+      setAdminIngredientForm({
+        ...emptyAdminIngredientForm,
+        user_id: adminIngredientForm.user_id,
+      });
+      await refreshAdminData();
+      await refreshCoreData();
+      setAdminSection("ingredients");
     } catch (submitError) {
       setError(submitError.message);
     } finally {
@@ -478,6 +539,12 @@ function App() {
     setMealForm(emptyMealForm);
   }
 
+  async function openAdmin() {
+    setCurrentView("admin");
+    setError("");
+    await refreshAdminData();
+  }
+
   function logout(reason = "") {
     api.setToken("");
     setUser(null);
@@ -486,6 +553,7 @@ function App() {
     setAuditLogs([]);
     setIngredients([]);
     setRecipes([]);
+    setAdminData({ users: [], ingredients: [], recipes: [], mealEntries: [] });
     setError(reason);
     setCurrentView("overview");
   }
@@ -1184,6 +1252,19 @@ function App() {
           </section>
         ) : null}
 
+        {currentView === "admin" && user.is_admin ? (
+          <AdminPanel
+            data={adminData}
+            activeSection={adminSection}
+            setActiveSection={setAdminSection}
+            ingredientForm={adminIngredientForm}
+            setIngredientForm={setAdminIngredientForm}
+            onIngredientSubmit={handleAdminIngredientSubmit}
+            submitting={submitting}
+            t={t}
+          />
+        ) : null}
+
         <section className="footer-actions">
           <button type="button" className="ghost-button footer-action-button" onClick={() => setCurrentView("reports")}>
             {t("common.report")}
@@ -1191,8 +1272,206 @@ function App() {
           <button type="button" className="ghost-button footer-action-button" onClick={logout}>
             {t("common.logOut")}
           </button>
+          {user.is_admin ? (
+            <button type="button" className="ghost-button footer-action-button" onClick={openAdmin}>
+              {t("admin.open")}
+            </button>
+          ) : null}
         </section>
       </div>
+    </div>
+  );
+}
+
+function AdminPanel({
+  data,
+  activeSection,
+  setActiveSection,
+  ingredientForm,
+  setIngredientForm,
+  onIngredientSubmit,
+  submitting,
+  t,
+}) {
+  const sections = [
+    { value: "users", label: t("admin.users") },
+    { value: "ingredients", label: t("admin.ingredients") },
+    { value: "recipes", label: t("admin.recipes") },
+    { value: "meals", label: t("admin.meals") },
+  ];
+
+  return (
+    <section className="admin-layout">
+      <aside className="admin-sidebar">
+        <h2>{t("admin.title")}</h2>
+        <div className="admin-menu">
+          {sections.map((section) => (
+            <button
+              key={section.value}
+              type="button"
+              className={activeSection === section.value ? "admin-menu-button active" : "admin-menu-button"}
+              onClick={() => setActiveSection(section.value)}
+            >
+              {section.label}
+            </button>
+          ))}
+        </div>
+      </aside>
+      <div className="admin-main">
+        {activeSection === "users" ? (
+          <Panel title={t("admin.users")} subtitle={t("admin.usersSubtitle")}>
+            <AdminTable
+              columns={[t("fields.name"), t("fields.email"), t("admin.role"), t("admin.content")]}
+              rows={data.users.map((item) => [
+                item.name,
+                item.email,
+                item.is_admin ? t("admin.adminRole") : t("admin.userRole"),
+                `${item.ingredient_count} / ${item.recipe_count} / ${item.meal_entry_count}`,
+              ])}
+              emptyLabel={t("admin.empty")}
+            />
+          </Panel>
+        ) : null}
+
+        {activeSection === "ingredients" ? (
+          <section className="content-grid">
+            <div className="main-column">
+              <Panel title={t("admin.ingredients")} subtitle={t("admin.ingredientsSubtitle")}>
+                <AdminTable
+                  columns={[
+                    t("fields.ingredientName"),
+                    t("fields.caloriesPer100g"),
+                    t("fields.email"),
+                    t("admin.createdAt"),
+                  ]}
+                  rows={data.ingredients.map((item) => [
+                    item.name,
+                    `${item.calories_per_100g} ${t("common.kcal")}`,
+                    item.user_email || "-",
+                    new Date(item.created_at).toLocaleDateString(),
+                  ])}
+                  emptyLabel={t("ingredients.empty")}
+                />
+              </Panel>
+            </div>
+            <aside className="side-column">
+              <Panel title={t("admin.addIngredient")} subtitle={t("admin.addIngredientSubtitle")}>
+                <form className="stack-form" onSubmit={onIngredientSubmit}>
+                  <Field label={t("admin.owner")}>
+                    <select
+                      value={ingredientForm.user_id}
+                      onChange={(event) =>
+                        setIngredientForm({ ...ingredientForm, user_id: event.target.value })
+                      }
+                      required
+                    >
+                      <option value="">{t("admin.selectUser")}</option>
+                      {data.users.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.email}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label={t("fields.ingredientName")}>
+                    <input
+                      placeholder={t("placeholders.ingredientName")}
+                      value={ingredientForm.name}
+                      onChange={(event) =>
+                        setIngredientForm({ ...ingredientForm, name: event.target.value })
+                      }
+                      required
+                    />
+                  </Field>
+                  <Field label={t("fields.caloriesPer100g")}>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      placeholder={t("placeholders.caloriesPer100g")}
+                      value={ingredientForm.calories_per_100g}
+                      onChange={(event) =>
+                        setIngredientForm({
+                          ...ingredientForm,
+                          calories_per_100g: event.target.value,
+                        })
+                      }
+                      required
+                    />
+                  </Field>
+                  <button type="submit" disabled={submitting === "adminIngredient"}>
+                    {submitting === "adminIngredient" ? t("common.saving") : t("ingredients.addButton")}
+                  </button>
+                </form>
+              </Panel>
+            </aside>
+          </section>
+        ) : null}
+
+        {activeSection === "recipes" ? (
+          <Panel title={t("admin.recipes")} subtitle={t("admin.recipesSubtitle")}>
+            <AdminTable
+              columns={[
+                t("fields.recipeName"),
+                t("fields.email"),
+                t("admin.caloriesPer100g"),
+                t("admin.ingredients"),
+              ]}
+              rows={data.recipes.map((item) => [
+                item.name,
+                item.user_email || "-",
+                Math.round(item.calories_per_100g),
+                item.ingredient_count,
+              ])}
+              emptyLabel={t("recipes.empty")}
+            />
+          </Panel>
+        ) : null}
+
+        {activeSection === "meals" ? (
+          <Panel title={t("admin.meals")} subtitle={t("admin.mealsSubtitle")}>
+            <AdminTable
+              columns={[t("fields.email"), t("fields.recipe"), t("fields.mealType"), t("fields.gramsEaten")]}
+              rows={data.mealEntries.map((item) => [
+                item.user_email || "-",
+                item.recipe_name,
+                t(`mealTypes.${item.meal_type}`),
+                `${Math.round(item.grams_eaten)} ${t("common.gramsShort")}`,
+              ])}
+              emptyLabel={t("overview.noMeals")}
+            />
+          </Panel>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function AdminTable({ columns, rows, emptyLabel }) {
+  if (!rows.length) {
+    return <p className="empty-state">{emptyLabel}</p>;
+  }
+
+  return (
+    <div className="admin-table-wrap">
+      <table className="admin-table">
+        <thead>
+          <tr>
+            {columns.map((column) => (
+              <th key={column}>{column}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, rowIndex) => (
+            <tr key={rowIndex}>
+              {row.map((cell, cellIndex) => (
+                <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

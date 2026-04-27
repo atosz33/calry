@@ -1,0 +1,37 @@
+name: Make Admin
+
+on:
+  workflow_dispatch:
+    inputs:
+      email:
+        description: Existing user email address
+        required: true
+        type: string
+
+jobs:
+  make-admin:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install SSH tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sshpass
+
+      - name: Trust deployment host
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Promote user
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PASSWORD: ${{ secrets.DEPLOY_PASSWORD }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          ADMIN_EMAIL: ${{ inputs.email }}
+        run: |
+          sshpass -p "$DEPLOY_PASSWORD" ssh "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd '$DEPLOY_PATH' && docker compose -f docker-compose.prod.yml -p calry exec -T backend python -m app.make_admin '$ADMIN_EMAIL'"

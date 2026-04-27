@@ -111,6 +111,15 @@ function createClient() {
     getDashboard: (date) => request(`/users/me/dashboard?date=${date}`),
     getDeficitReport: (days, endDate) =>
       request(`/reports/deficit?days=${days}&end_date=${endDate}`),
+    adminListUsers: () => request("/admin/users"),
+    adminListIngredients: () => request("/admin/ingredients"),
+    adminCreateIngredient: (payload) =>
+      request("/admin/ingredients", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+    adminListRecipes: () => request("/admin/recipes"),
+    adminListMealEntries: () => request("/admin/meal-entries"),
   };
 }
 

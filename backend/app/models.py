@@ -1,7 +1,7 @@
 import enum
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, Enum, Float, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Enum, Float, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -27,6 +27,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     auth_token: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     gender: Mapped[Gender] = mapped_column(Enum(Gender))
