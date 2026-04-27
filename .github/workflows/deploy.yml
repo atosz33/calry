@@ -38,8 +38,11 @@ jobs:
         run: |
           sshpass -p "$DEPLOY_PASSWORD" ssh "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH/data'"
           sshpass -p "$DEPLOY_PASSWORD" rsync -az --delete \
+            --filter "protect /data/***" \
             --exclude ".git/" \
             --exclude ".env.deployment" \
+            --exclude "*.swp" \
+            --exclude "data/" \
             --exclude "backend/data/" \
             --exclude "node_modules/" \
             --exclude "dist/" \
