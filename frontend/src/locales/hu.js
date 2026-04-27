@@ -125,7 +125,7 @@ const hu = {
     addTitle: "Recept keszitese",
     editTitle: "Recept szerkesztese",
     totalWeightHelp: "A teljes suly a hozzavalo mennyisegekbol szamolodik",
-    addIngredientRow: "Hozzavalo sor hozzaadasa",
+    addIngredientRow: "Ujabb hozzavalo hozzaadasa",
     saveButton: "Recept mentese",
     updateButton: "Recept frissitese",
     empty: "Az etkezesek rogzitesehez eloszor vegyel fel egy receptet.",

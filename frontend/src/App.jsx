@@ -46,6 +46,7 @@ const emptyAdminIngredientForm = {
 
 const emptyRecipeLine = {
   ingredient_id: "",
+  ingredient_query: "",
   amount_grams: "",
 };
 
@@ -471,6 +472,7 @@ function App() {
       name: recipe.name,
       ingredients: recipe.ingredients.map((item) => ({
         ingredient_id: String(item.ingredient_id),
+        ingredient_query: item.ingredient_name,
         amount_grams: String(item.amount_grams),
       })),
     });
@@ -501,6 +503,24 @@ function App() {
       ...current,
       ingredients: current.ingredients.map((item, itemIndex) =>
         itemIndex === index ? { ...item, [field]: value } : item
+      ),
+    }));
+  }
+
+  function updateRecipeIngredientQuery(index, value) {
+    setRecipeForm((current) => ({
+      ...current,
+      ingredients: current.ingredients.map((item, itemIndex) =>
+        itemIndex === index
+          ? {
+              ...item,
+              ingredient_query: value,
+              ingredient_id:
+                ingredients.find(
+                  (ingredient) => ingredient.name.toLocaleLowerCase() === value.toLocaleLowerCase()
+                )?.id || "",
+            }
+          : item
       ),
     }));
   }
@@ -941,45 +961,50 @@ function App() {
                     <div className="yield-pill">{t("recipes.totalWeightValue", { value: totalRecipeYield })}</div>
                   </Field>
                   <div className="line-items">
-                    {recipeForm.ingredients.map((line, index) => (
-                      <div className="line-item" key={`${index}-${line.ingredient_id}`}>
-                        <Field label={t("recipes.ingredientRow", { index: index + 1 })}>
-                          <select
-                            value={line.ingredient_id}
-                            onChange={(event) =>
-                              updateRecipeLine(index, "ingredient_id", event.target.value)
-                            }
-                            required
+                    {recipeForm.ingredients.map((line, index) => {
+                      const matchingIngredients = findMatchingIngredients(ingredients, line.ingredient_query);
+
+                      return (
+                        <div className="line-item" key={`${index}-${line.ingredient_id}-${index}`}>
+                          <Field label={t("recipes.ingredientRow", { index: index + 1 })}>
+                            <input
+                              list={`recipe-ingredient-options-${index}`}
+                              placeholder={t("placeholders.selectIngredient")}
+                              value={line.ingredient_query}
+                              onChange={(event) =>
+                                updateRecipeIngredientQuery(index, event.target.value)
+                              }
+                              required
+                            />
+                            <datalist id={`recipe-ingredient-options-${index}`}>
+                              {matchingIngredients.map((ingredient) => (
+                                <option key={ingredient.id} value={ingredient.name} />
+                              ))}
+                            </datalist>
+                          </Field>
+                          <Field label={t("fields.amountInGrams")}>
+                            <input
+                              type="number"
+                              step="0.1"
+                              placeholder={t("placeholders.amountInGrams")}
+                              value={line.amount_grams}
+                              onChange={(event) =>
+                                updateRecipeLine(index, "amount_grams", event.target.value)
+                              }
+                              required
+                            />
+                          </Field>
+                          <button
+                            type="button"
+                            className="remove-line-button"
+                            aria-label={t("common.remove")}
+                            onClick={() => removeRecipeLine(index)}
                           >
-                            <option value="">{t("placeholders.selectIngredient")}</option>
-                            {ingredients.map((ingredient) => (
-                              <option key={ingredient.id} value={ingredient.id}>
-                                {ingredient.name}
-                              </option>
-                            ))}
-                          </select>
-                        </Field>
-                        <Field label={t("fields.amountInGrams")}>
-                          <input
-                            type="number"
-                            step="0.1"
-                            placeholder={t("placeholders.amountInGrams")}
-                            value={line.amount_grams}
-                            onChange={(event) =>
-                              updateRecipeLine(index, "amount_grams", event.target.value)
-                            }
-                            required
-                          />
-                        </Field>
-                        <button
-                          type="button"
-                          className="secondary-button"
-                          onClick={() => removeRecipeLine(index)}
-                        >
-                          {t("common.remove")}
-                        </button>
-                      </div>
-                    ))}
+                            X
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                   <button type="button" className="secondary-button" onClick={addRecipeLine}>
                     {t("recipes.addIngredientRow")}
@@ -1540,6 +1565,24 @@ function LanguageSwitcher({ value, options, onChange }) {
 function labelMealType(mealType, t) {
   const option = mealTypeOptions.find((item) => item.value === mealType);
   return option ? t(option.labelKey) : mealType;
+}
+
+function findMatchingIngredients(ingredients, query) {
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery) {
+    return ingredients.slice(0, 50);
+  }
+
+  return ingredients
+    .filter((ingredient) => normalizeSearchText(ingredient.name).includes(normalizedQuery))
+    .slice(0, 50);
+}
+
+function normalizeSearchText(value) {
+  return value
+    .toLocaleLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
 function buildQuickDates(count) {

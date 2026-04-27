@@ -446,9 +446,22 @@ select:focus {
 
 .line-item {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(140px, 0.6fr) auto;
+  grid-template-columns: minmax(0, 1.2fr) minmax(140px, 0.6fr) 44px;
   gap: 10px;
   align-items: end;
+}
+
+.remove-line-button {
+  width: 44px;
+  min-width: 44px;
+  height: 46px;
+  padding: 0;
+  border-radius: 12px;
+  background: #fff0f0;
+  color: #b4232f;
+  border: 1px solid #f1cccc;
+  box-shadow: none;
+  font-weight: 900;
 }
 
 .inline-actions {

@@ -125,7 +125,7 @@ const en = {
     addTitle: "Build Recipe",
     editTitle: "Edit Recipe",
     totalWeightHelp: "Total weight is calculated from the ingredient amounts",
-    addIngredientRow: "Add ingredient row",
+    addIngredientRow: "Add another ingredient",
     saveButton: "Save recipe",
     updateButton: "Update recipe",
     empty: "Add your first recipe to start logging meals.",
