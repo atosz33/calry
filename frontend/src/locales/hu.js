@@ -118,6 +118,12 @@ const hu = {
     generateRecipes: "Receptek kitalalasa",
     generating: "Generalas...",
     useRecipe: "Atvetel",
+    errors: {
+      disabled: "Az AI jelenleg nincs engedelyezve a fiokodhoz.",
+      general: "Az AI valasza most nem feldolgozhato. Probald ujra kesobb.",
+      notConfigured: "Az AI szolgaltatas nincs beallitva a szerveren.",
+      rateLimit: "Elertuk az AI szolgaltatas keretlimitjet. Probald ujra kesobb.",
+    },
   },
   dashboard: {
     tracker: "Napi kaloriaszamlalo",
@@ -217,6 +223,7 @@ const hu = {
     adminRole: "Admin",
     userRole: "User",
     aiIntegration: "AI integracio",
+    aiUsage: "AI hozzavalo / recept",
     enabled: "Bekapcsolva",
     disabled: "Kikapcsolva",
     content: "Hozzavalo / recept / etkezes",

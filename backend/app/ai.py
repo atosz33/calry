@@ -11,18 +11,29 @@ from .models import Ingredient
 
 
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+AI_DISABLED_CODE = "AI_DISABLED"
+AI_GENERAL_ERROR_CODE = "AI_GENERAL_ERROR"
+AI_NOT_CONFIGURED_CODE = "AI_NOT_CONFIGURED"
+AI_RATE_LIMIT_CODE = "AI_RATE_LIMIT"
+
+
+def ai_error(status_code: int, code: str, message: str) -> HTTPException:
+    return HTTPException(status_code=status_code, detail={"code": code, "message": message})
 
 
 def gemini_is_configured() -> bool:
     return bool(os.getenv("GEMINI_API_KEY"))
 
 
-def suggest_ingredient_nutrition(name: str) -> dict[str, Any]:
+def suggest_ingredient_nutrition(name: str, language: str = "en") -> dict[str, Any]:
+    language_name = _language_name(language)
     prompt = f"""
 Estimate common nutrition values per 100 grams for this ingredient: {name}.
+The user interface language is {language_name}. Interpret the ingredient name in that language first.
 Return only JSON with these keys:
 name, calories_per_100g, protein_per_100g, carbs_per_100g, fat_per_100g, note.
-Use grams for macros, kcal for calories. If the ingredient is ambiguous, choose the most common raw/plain form and mention that in note.
+Use grams for macros, kcal for calories. Return name and note in {language_name}.
+If the ingredient is ambiguous, choose the most common raw/plain form in the user's language and mention that in note.
 """
     data = _generate_json(prompt)
     return {
@@ -39,7 +50,9 @@ def suggest_recipes(
     ingredients: list[Ingredient],
     only_existing_ingredients: bool,
     prompt: str | None,
+    language: str = "en",
 ) -> list[dict[str, Any]]:
+    language_name = _language_name(language)
     ingredient_lines = "\n".join(
         f"- id={ingredient.id}; name={ingredient.name}; kcal={ingredient.calories_per_100g}; "
         f"protein={ingredient.protein_per_100g}; carbs={ingredient.carbs_per_100g}; fat={ingredient.fat_per_100g}"
@@ -53,6 +66,8 @@ def suggest_recipes(
     extra_prompt = prompt or "No extra preference."
     request_prompt = f"""
 Create 3 practical recipe ideas for a calorie tracking app.
+The user interface language is {language_name}. Interpret ingredient names and user preference in that language first.
+Return recipe names and instructions in {language_name}.
 {mode}
 Available ingredients:
 {ingredient_lines or "- none"}
@@ -74,7 +89,11 @@ Return only JSON with this shape:
     data = _generate_json(request_prompt)
     raw_recipes = data.get("recipes") if isinstance(data, dict) else None
     if not isinstance(raw_recipes, list):
-        raise HTTPException(status_code=502, detail="AI returned an invalid recipe response")
+        raise ai_error(
+            502,
+            AI_GENERAL_ERROR_CODE,
+            "The AI service returned an invalid recipe response.",
+        )
 
     ingredient_by_id = {ingredient.id: ingredient for ingredient in ingredients}
     normalized_recipes = []
@@ -122,14 +141,14 @@ Return only JSON with this shape:
             )
 
     if not normalized_recipes:
-        raise HTTPException(status_code=502, detail="AI did not return usable recipes")
+        raise ai_error(502, AI_GENERAL_ERROR_CODE, "The AI service did not return usable recipes.")
     return normalized_recipes
 
 
 def _generate_json(prompt: str) -> dict[str, Any]:
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=503, detail="Gemini API key is not configured")
+        raise ai_error(503, AI_NOT_CONFIGURED_CODE, "AI is not configured on the server.")
 
     model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-preview")
     request = urllib.request.Request(
@@ -150,37 +169,46 @@ def _generate_json(prompt: str) -> dict[str, Any]:
         with urllib.request.urlopen(request, timeout=20) as response:
             payload = json.loads(response.read().decode())
     except urllib.error.HTTPError as error:
-        detail = error.read().decode() or str(error)
-        raise HTTPException(status_code=502, detail=f"Gemini API error: {detail[:500]}")
+        if error.code == 429:
+            raise ai_error(429, AI_RATE_LIMIT_CODE, "The AI service rate limit was reached.")
+        raise ai_error(502, AI_GENERAL_ERROR_CODE, "The AI service returned an error.")
     except (urllib.error.URLError, TimeoutError) as error:
-        raise HTTPException(status_code=502, detail=f"Gemini API is unavailable: {error}")
+        raise ai_error(502, AI_GENERAL_ERROR_CODE, "The AI service is currently unavailable.")
 
     text = _extract_text(payload)
     try:
         parsed = json.loads(_strip_json_fence(text))
     except json.JSONDecodeError:
-        raise HTTPException(status_code=502, detail="AI returned non-JSON content")
+        raise ai_error(502, AI_GENERAL_ERROR_CODE, "The AI service returned an unreadable response.")
     if not isinstance(parsed, dict):
-        raise HTTPException(status_code=502, detail="AI returned an invalid JSON shape")
+        raise ai_error(502, AI_GENERAL_ERROR_CODE, "The AI service returned an invalid response.")
     return parsed
 
 
 def _extract_text(payload: dict[str, Any]) -> str:
     candidates = payload.get("candidates")
     if not isinstance(candidates, list) or not candidates:
-        raise HTTPException(status_code=502, detail="AI returned no candidates")
+        raise ai_error(502, AI_GENERAL_ERROR_CODE, "The AI service returned no result.")
     parts = candidates[0].get("content", {}).get("parts", [])
     if not isinstance(parts, list):
-        raise HTTPException(status_code=502, detail="AI returned no content")
+        raise ai_error(502, AI_GENERAL_ERROR_CODE, "The AI service returned no content.")
     text = "".join(part.get("text", "") for part in parts if isinstance(part, dict))
     if not text.strip():
-        raise HTTPException(status_code=502, detail="AI returned empty content")
+        raise ai_error(502, AI_GENERAL_ERROR_CODE, "The AI service returned empty content.")
     return text
 
 
 def _strip_json_fence(text: str) -> str:
     match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.DOTALL)
     return match.group(1) if match else text.strip()
+
+
+def _language_name(language: str) -> str:
+    normalized = (language or "en").split("-")[0].lower()
+    return {
+        "hu": "Hungarian",
+        "en": "English",
+    }.get(normalized, normalized)
 
 
 def _non_negative_number(value: Any) -> float:

@@ -8,8 +8,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from .database import get_db, init_db
-from .ai import gemini_is_configured, suggest_ingredient_nutrition, suggest_recipes
-from .models import Ingredient, LoginAudit, MealEntry, Recipe, RecipeIngredient, User
+from .ai import (
+    AI_DISABLED_CODE,
+    AI_GENERAL_ERROR_CODE,
+    ai_error,
+    gemini_is_configured,
+    suggest_ingredient_nutrition,
+    suggest_recipes,
+)
+from .models import AiUsageLog, Ingredient, LoginAudit, MealEntry, Recipe, RecipeIngredient, User
 from .schemas import (
     AuthResponse,
     AdminIngredientRead,
@@ -174,7 +181,44 @@ def get_owned_meal_entry(meal_entry_id: int, current_user: User, db: Session) ->
 
 def ensure_ai_enabled(current_user: User) -> None:
     if not current_user.ai_enabled:
-        raise HTTPException(status_code=403, detail="AI mode is disabled for this user")
+        raise ai_error(403, AI_DISABLED_CODE, "AI mode is disabled for this user.")
+
+
+def extract_error_code(error: HTTPException) -> str:
+    if isinstance(error.detail, dict):
+        code = error.detail.get("code")
+        if isinstance(code, str):
+            return code
+    return AI_GENERAL_ERROR_CODE
+
+
+def create_ai_usage_log(
+    db: Session,
+    current_user: User,
+    request_type: str,
+    outcome: str,
+    error_code: str | None = None,
+) -> None:
+    db.add(
+        AiUsageLog(
+            user_id=current_user.id,
+            request_type=request_type,
+            outcome=outcome,
+            error_code=error_code,
+        )
+    )
+    db.commit()
+
+
+def get_ai_usage_counts(db: Session) -> dict[int, dict[str, int]]:
+    rows = db.execute(
+        select(AiUsageLog.user_id, AiUsageLog.request_type, func.count(AiUsageLog.id))
+        .group_by(AiUsageLog.user_id, AiUsageLog.request_type)
+    ).all()
+    counts: dict[int, dict[str, int]] = {}
+    for user_id, request_type, count in rows:
+        counts.setdefault(user_id, {})[request_type] = count
+    return counts
 
 
 @app.post("/auth/register", response_model=AuthResponse, status_code=201)
@@ -321,6 +365,7 @@ def admin_list_users(
     meal_counts = dict(
         db.execute(select(MealEntry.user_id, func.count(MealEntry.id)).group_by(MealEntry.user_id)).all()
     )
+    ai_usage_counts = get_ai_usage_counts(db)
 
     return [
         AdminUserRead(
@@ -328,6 +373,8 @@ def admin_list_users(
             ingredient_count=ingredient_counts.get(user.id, 0),
             recipe_count=recipe_counts.get(user.id, 0),
             meal_entry_count=meal_counts.get(user.id, 0),
+            ai_ingredient_call_count=ai_usage_counts.get(user.id, {}).get("ingredient", 0),
+            ai_recipe_call_count=ai_usage_counts.get(user.id, {}).get("recipe", 0),
         )
         for user in users
     ]
@@ -352,12 +399,32 @@ def admin_update_user(
     ingredient_count = db.scalar(select(func.count(Ingredient.id)).where(Ingredient.user_id == target_user.id)) or 0
     recipe_count = db.scalar(select(func.count(Recipe.id)).where(Recipe.user_id == target_user.id)) or 0
     meal_entry_count = db.scalar(select(func.count(MealEntry.id)).where(MealEntry.user_id == target_user.id)) or 0
+    ai_ingredient_call_count = (
+        db.scalar(
+            select(func.count(AiUsageLog.id)).where(
+                AiUsageLog.user_id == target_user.id,
+                AiUsageLog.request_type == "ingredient",
+            )
+        )
+        or 0
+    )
+    ai_recipe_call_count = (
+        db.scalar(
+            select(func.count(AiUsageLog.id)).where(
+                AiUsageLog.user_id == target_user.id,
+                AiUsageLog.request_type == "recipe",
+            )
+        )
+        or 0
+    )
 
     return AdminUserRead(
         **serialize_user(target_user).model_dump(),
         ingredient_count=ingredient_count,
         recipe_count=recipe_count,
         meal_entry_count=meal_entry_count,
+        ai_ingredient_call_count=ai_ingredient_call_count,
+        ai_recipe_call_count=ai_recipe_call_count,
     )
 
 
@@ -507,10 +574,20 @@ def get_ai_status(current_user: User = Depends(get_current_user)) -> dict[str, b
 @app.post("/ai/ingredient-nutrition", response_model=IngredientNutritionSuggestionRead)
 def suggest_ingredient_nutrition_endpoint(
     payload: IngredientNutritionSuggestionRequest,
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> IngredientNutritionSuggestionRead:
     ensure_ai_enabled(current_user)
-    return IngredientNutritionSuggestionRead(**suggest_ingredient_nutrition(payload.name))
+    try:
+        suggestion = IngredientNutritionSuggestionRead(
+            **suggest_ingredient_nutrition(payload.name, payload.language)
+        )
+    except HTTPException as error:
+        create_ai_usage_log(db, current_user, "ingredient", "failed", extract_error_code(error))
+        raise
+
+    create_ai_usage_log(db, current_user, "ingredient", "success")
+    return suggestion
 
 
 @app.post("/ai/recipe-suggestions", response_model=list[RecipeSuggestionRead])
@@ -521,12 +598,20 @@ def suggest_recipe_endpoint(
 ) -> list[RecipeSuggestionRead]:
     ensure_ai_enabled(current_user)
     ingredients = db.scalars(select(Ingredient).order_by(Ingredient.name.asc())).all()
-    suggestions = suggest_recipes(
-        ingredients=ingredients,
-        only_existing_ingredients=payload.only_existing_ingredients,
-        prompt=payload.prompt,
-    )
-    return [RecipeSuggestionRead(**suggestion) for suggestion in suggestions]
+    try:
+        suggestions = suggest_recipes(
+            ingredients=ingredients,
+            only_existing_ingredients=payload.only_existing_ingredients,
+            prompt=payload.prompt,
+            language=payload.language,
+        )
+        response = [RecipeSuggestionRead(**suggestion) for suggestion in suggestions]
+    except HTTPException as error:
+        create_ai_usage_log(db, current_user, "recipe", "failed", extract_error_code(error))
+        raise
+
+    create_ai_usage_log(db, current_user, "recipe", "success")
+    return response
 
 
 @app.get("/reports/deficit", response_model=DeficitReportRead)

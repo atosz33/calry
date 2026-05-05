@@ -25,7 +25,7 @@ class LoginRequest(BaseModel):
 
 
 class UserUpdate(UserBase):
-    ai_enabled: bool = False
+    pass
 
 
 class UserRead(UserBase):
@@ -59,6 +59,8 @@ class AdminUserRead(UserRead):
     ingredient_count: int
     recipe_count: int
     meal_entry_count: int
+    ai_ingredient_call_count: int
+    ai_recipe_call_count: int
 
 
 class AdminUserUpdate(BaseModel):
@@ -221,6 +223,7 @@ class DeficitReportRead(BaseModel):
 
 class IngredientNutritionSuggestionRequest(BaseModel):
     name: str = Field(min_length=2, max_length=120)
+    language: str = Field(default="en", min_length=2, max_length=10)
 
 
 class IngredientNutritionSuggestionRead(BaseModel):
@@ -235,6 +238,7 @@ class IngredientNutritionSuggestionRead(BaseModel):
 class RecipeSuggestionRequest(BaseModel):
     only_existing_ingredients: bool = True
     prompt: str | None = Field(default=None, max_length=500)
+    language: str = Field(default="en", min_length=2, max_length=10)
 
 
 class RecipeSuggestionIngredientRead(BaseModel):

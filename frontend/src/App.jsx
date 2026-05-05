@@ -307,7 +307,6 @@ function App() {
         daily_calorie_goal: profileForm.daily_calorie_goal
           ? Number(profileForm.daily_calorie_goal)
           : null,
-        ai_enabled: Boolean(profileForm.ai_enabled),
       });
       setUser(updated);
       hydrateProfileForm(updated);
@@ -386,7 +385,10 @@ function App() {
     setSubmitting("ingredientAi");
     setError("");
     try {
-      const suggestion = await api.suggestIngredientNutrition({ name: ingredientForm.name.trim() });
+      const suggestion = await api.suggestIngredientNutrition({
+        name: ingredientForm.name.trim(),
+        language: i18n.language,
+      });
       setIngredientForm((current) => ({
         ...current,
         calories_per_100g: String(suggestion.calories_per_100g),
@@ -395,7 +397,7 @@ function App() {
         fat_per_100g: String(suggestion.fat_per_100g),
       }));
     } catch (submitError) {
-      setError(submitError.message);
+      setError(getAiErrorMessage(submitError, t));
     } finally {
       setSubmitting("");
     }
@@ -408,10 +410,11 @@ function App() {
       const suggestions = await api.suggestRecipes({
         only_existing_ingredients: aiRecipeForm.only_existing_ingredients,
         prompt: aiRecipeForm.prompt || null,
+        language: i18n.language,
       });
       setRecipeSuggestions(suggestions);
     } catch (submitError) {
-      setError(submitError.message);
+      setError(getAiErrorMessage(submitError, t));
     } finally {
       setSubmitting("");
     }
@@ -1443,9 +1446,8 @@ function App() {
                     <input
                       type="checkbox"
                       checked={profileForm.ai_enabled}
-                      onChange={(event) =>
-                        setProfileForm({ ...profileForm, ai_enabled: event.target.checked })
-                      }
+                      disabled
+                      readOnly
                     />
                     <span>{t("profile.aiEnabled")}</span>
                   </label>
@@ -1557,7 +1559,14 @@ function AdminPanel({
         {activeSection === "users" ? (
           <Panel title={t("admin.users")} subtitle={t("admin.usersSubtitle")}>
             <AdminTable
-              columns={[t("fields.name"), t("fields.email"), t("admin.role"), t("admin.aiIntegration"), t("admin.content")]}
+              columns={[
+                t("fields.name"),
+                t("fields.email"),
+                t("admin.role"),
+                t("admin.aiIntegration"),
+                t("admin.content"),
+                t("admin.aiUsage"),
+              ]}
               rows={data.users.map((item) => [
                 item.name,
                 item.email,
@@ -1572,6 +1581,7 @@ function AdminPanel({
                   <span>{item.ai_enabled ? t("admin.enabled") : t("admin.disabled")}</span>
                 </label>,
                 `${item.ingredient_count} / ${item.recipe_count} / ${item.meal_entry_count}`,
+                `${item.ai_ingredient_call_count || 0} / ${item.ai_recipe_call_count || 0}`,
               ])}
               emptyLabel={t("admin.empty")}
             />
@@ -1852,6 +1862,17 @@ function findMatchingIngredients(ingredients, query) {
   return ingredients
     .filter((ingredient) => normalizeSearchText(ingredient.name).includes(normalizedQuery))
     .slice(0, 50);
+}
+
+function getAiErrorMessage(error, t) {
+  const aiErrorKeyByCode = {
+    AI_DISABLED: "ai.errors.disabled",
+    AI_GENERAL_ERROR: "ai.errors.general",
+    AI_NOT_CONFIGURED: "ai.errors.notConfigured",
+    AI_RATE_LIMIT: "ai.errors.rateLimit",
+  };
+  const translationKey = aiErrorKeyByCode[error?.code];
+  return translationKey ? t(translationKey) : error.message;
 }
 
 function normalizeSearchText(value) {

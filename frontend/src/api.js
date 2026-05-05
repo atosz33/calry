@@ -1,5 +1,14 @@
 const API_URL = import.meta.env.VITE_API_URL || "/api";
 
+class ApiError extends Error {
+  constructor(message, { status, code } = {}) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code || "";
+  }
+}
+
 function createClient() {
   let token = localStorage.getItem("calry_token") || "";
 
@@ -24,13 +33,19 @@ function createClient() {
 
     if (!response.ok) {
       let detail = "Request failed";
+      let code = "";
       try {
         const payload = await response.json();
-        detail = payload.detail || detail;
+        if (payload.detail && typeof payload.detail === "object") {
+          detail = payload.detail.message || detail;
+          code = payload.detail.code || "";
+        } else {
+          detail = payload.detail || detail;
+        }
       } catch {
         detail = response.statusText || detail;
       }
-      throw new Error(detail);
+      throw new ApiError(detail, { status: response.status, code });
     }
 
     return response.json();

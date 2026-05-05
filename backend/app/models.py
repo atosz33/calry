@@ -45,6 +45,7 @@ class User(Base):
     recipes: Mapped[list["Recipe"]] = relationship(back_populates="user")
     meal_entries: Mapped[list["MealEntry"]] = relationship(back_populates="user")
     login_audits: Mapped[list["LoginAudit"]] = relationship(back_populates="user")
+    ai_usage_logs: Mapped[list["AiUsageLog"]] = relationship(back_populates="user")
 
 
 class Ingredient(Base):
@@ -124,3 +125,16 @@ class LoginAudit(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     user: Mapped["User | None"] = relationship(back_populates="login_audits")
+
+
+class AiUsageLog(Base):
+    __tablename__ = "ai_usage_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    request_type: Mapped[str] = mapped_column(String(50), index=True)
+    outcome: Mapped[str] = mapped_column(String(50))
+    error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    user: Mapped["User"] = relationship(back_populates="ai_usage_logs")

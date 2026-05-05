@@ -118,6 +118,12 @@ const en = {
     generateRecipes: "Generate recipes",
     generating: "Generating...",
     useRecipe: "Use recipe",
+    errors: {
+      disabled: "AI is not enabled for your account.",
+      general: "The AI response could not be processed right now. Try again later.",
+      notConfigured: "AI is not configured on the server.",
+      rateLimit: "The AI service rate limit was reached. Try again later.",
+    },
   },
   dashboard: {
     tracker: "Daily calorie tracker",
@@ -217,6 +223,7 @@ const en = {
     adminRole: "Admin",
     userRole: "User",
     aiIntegration: "AI integration",
+    aiUsage: "AI ingredient / recipe",
     enabled: "Enabled",
     disabled: "Disabled",
     content: "Ingredients / recipes / meals",
