@@ -9,6 +9,8 @@ services:
       - ./backend/data:/data
     environment:
       DATABASE_URL: sqlite:////data/calry.db
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.1-flash-preview}
 
   frontend:
     build:

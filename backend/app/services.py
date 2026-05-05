@@ -40,11 +40,26 @@ def recipe_total_calories(recipe: Recipe) -> float:
     )
 
 
+def recipe_total_macro(recipe: Recipe, nutrient: str) -> float:
+    field_name = f"{nutrient}_per_100g"
+    return round(
+        sum(item.amount_grams * getattr(item.ingredient, field_name) / 100 for item in recipe.ingredients),
+        2,
+    )
+
+
 def recipe_calories_per_100g(recipe: Recipe) -> float:
     total_yield = recipe_total_yield_grams(recipe)
     if total_yield == 0:
         return 0.0
     return round(recipe_total_calories(recipe) / total_yield * 100, 2)
+
+
+def recipe_macro_per_100g(recipe: Recipe, nutrient: str) -> float:
+    total_yield = recipe_total_yield_grams(recipe)
+    if total_yield == 0:
+        return 0.0
+    return round(recipe_total_macro(recipe, nutrient) / total_yield * 100, 2)
 
 
 def serialize_recipe(recipe: Recipe) -> RecipeRead:
@@ -55,16 +70,30 @@ def serialize_recipe(recipe: Recipe) -> RecipeRead:
             ingredient_name=item.ingredient.name,
             amount_grams=item.amount_grams,
             calories=round(item.amount_grams * item.ingredient.calories_per_100g / 100, 2),
+            protein=round(item.amount_grams * item.ingredient.protein_per_100g / 100, 2),
+            carbs=round(item.amount_grams * item.ingredient.carbs_per_100g / 100, 2),
+            fat=round(item.amount_grams * item.ingredient.fat_per_100g / 100, 2),
         )
         for item in recipe.ingredients
     ]
 
+    total_protein = recipe_total_macro(recipe, "protein")
+    total_carbs = recipe_total_macro(recipe, "carbs")
+    total_fat = recipe_total_macro(recipe, "fat")
+
     return RecipeRead(
         id=recipe.id,
         name=recipe.name,
+        instructions=recipe.instructions,
         total_yield_grams=recipe_total_yield_grams(recipe),
         total_calories=recipe_total_calories(recipe),
         calories_per_100g=recipe_calories_per_100g(recipe),
+        total_protein=total_protein,
+        protein_per_100g=recipe_macro_per_100g(recipe, "protein"),
+        total_carbs=total_carbs,
+        carbs_per_100g=recipe_macro_per_100g(recipe, "carbs"),
+        total_fat=total_fat,
+        fat_per_100g=recipe_macro_per_100g(recipe, "fat"),
         ingredients=ingredients,
         created_at=recipe.created_at,
     )
@@ -72,6 +101,11 @@ def serialize_recipe(recipe: Recipe) -> RecipeRead:
 
 def meal_entry_calories(entry: MealEntry) -> float:
     per_100g = recipe_calories_per_100g(entry.recipe)
+    return round(entry.grams_eaten * per_100g / 100, 2)
+
+
+def meal_entry_macro(entry: MealEntry, nutrient: str) -> float:
+    per_100g = recipe_macro_per_100g(entry.recipe, nutrient)
     return round(entry.grams_eaten * per_100g / 100, 2)
 
 
@@ -85,6 +119,9 @@ def serialize_meal_entry(entry: MealEntry) -> MealEntryRead:
         date=entry.date,
         grams_eaten=entry.grams_eaten,
         calories=meal_entry_calories(entry),
+        protein=meal_entry_macro(entry, "protein"),
+        carbs=meal_entry_macro(entry, "carbs"),
+        fat=meal_entry_macro(entry, "fat"),
         note=entry.note,
         created_at=entry.created_at,
     )
@@ -104,6 +141,9 @@ def build_daily_summary(user: User, entries: list[MealEntry], entry_date) -> Dai
             MealGroupRead(
                 meal_type=meal_type,
                 total_calories=round(sum(item.calories for item in meal_entries), 2),
+                total_protein=round(sum(item.protein for item in meal_entries), 2),
+                total_carbs=round(sum(item.carbs for item in meal_entries), 2),
+                total_fat=round(sum(item.fat for item in meal_entries), 2),
                 entries=meal_entries,
             )
         )
@@ -116,6 +156,9 @@ def build_daily_summary(user: User, entries: list[MealEntry], entry_date) -> Dai
         user_id=user.id,
         calorie_target=target,
         consumed_calories=consumed,
+        consumed_protein=round(sum(group.total_protein for group in meals), 2),
+        consumed_carbs=round(sum(group.total_carbs for group in meals), 2),
+        consumed_fat=round(sum(group.total_fat for group in meals), 2),
         remaining_calories=round(target - consumed, 2),
         meals=meals,
     )

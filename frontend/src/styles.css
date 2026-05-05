@@ -25,7 +25,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -74,7 +75,8 @@ button:disabled {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   border: 1px solid #d8e2ee;
   border-radius: 14px;
@@ -84,9 +86,15 @@ select {
 }
 
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   outline: 2px solid rgba(47, 128, 237, 0.22);
   border-color: #7bb0f8;
+}
+
+textarea {
+  min-height: 112px;
+  resize: vertical;
 }
 
 .app-shell {
@@ -276,6 +284,10 @@ select:focus {
   background: linear-gradient(180deg, #fff5e7 0%, #ffeed5 100%);
 }
 
+.dashboard-macros {
+  margin-bottom: 18px;
+}
+
 .progress-card {
   background: #f7faff;
   border-radius: 22px;
@@ -425,6 +437,19 @@ select:focus {
   gap: 10px;
 }
 
+.ai-field-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 52px;
+  gap: 10px;
+}
+
+.ai-square-button {
+  width: 52px;
+  height: 52px;
+  padding: 0;
+  border-radius: 12px;
+}
+
 .password-toggle {
   min-width: 88px;
 }
@@ -433,6 +458,49 @@ select:focus {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+
+.macro-input-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.macro-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.macro-summary span {
+  border-radius: 999px;
+  background: #f2f7fd;
+  color: #36506b;
+  padding: 0.35rem 0.55rem;
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.ai-recipe-box {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #36506b;
+  font-weight: 800;
+}
+
+.checkbox-row input {
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0;
 }
 
 .line-items,
@@ -521,6 +589,12 @@ select:focus {
 
 .recipe-summary {
   margin-top: 10px;
+}
+
+.recipe-instructions {
+  margin: 10px 0 0;
+  color: #51657f;
+  white-space: pre-wrap;
 }
 
 .report-grid {
@@ -759,6 +833,8 @@ select:focus {
   }
 
   .stats-grid,
+  .macro-input-grid,
+  .ai-field-row,
   .form-row,
   .line-item,
   .quick-date-row,

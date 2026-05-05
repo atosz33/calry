@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import enum
 from datetime import date, datetime
 
@@ -28,6 +30,7 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     auth_token: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    ai_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     gender: Mapped[Gender] = mapped_column(Enum(Gender))
@@ -52,6 +55,9 @@ class Ingredient(Base):
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(120))
     calories_per_100g: Mapped[float] = mapped_column(Float)
+    protein_per_100g: Mapped[float] = mapped_column(Float, default=0)
+    carbs_per_100g: Mapped[float] = mapped_column(Float, default=0)
+    fat_per_100g: Mapped[float] = mapped_column(Float, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     user: Mapped["User"] = relationship(back_populates="ingredients")
@@ -65,6 +71,7 @@ class Recipe(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(120))
+    instructions: Mapped[str | None] = mapped_column(String(4000), nullable=True)
     total_yield_grams: Mapped[float] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

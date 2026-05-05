@@ -93,6 +93,16 @@ function createClient() {
       request(`/recipes/${id}`, {
         method: "DELETE",
       }),
+    suggestIngredientNutrition: (payload) =>
+      request("/ai/ingredient-nutrition", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+    suggestRecipes: (payload) =>
+      request("/ai/recipe-suggestions", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
     listMealEntries: (date) => request(`/meal-entries?date=${date}`),
     createMealEntry: (payload) =>
       request("/meal-entries", {

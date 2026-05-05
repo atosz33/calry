@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from .database import get_db, init_db
+from .ai import gemini_is_configured, suggest_ingredient_nutrition, suggest_recipes
 from .models import Ingredient, LoginAudit, MealEntry, Recipe, RecipeIngredient, User
 from .schemas import (
     AuthResponse,
@@ -18,6 +19,8 @@ from .schemas import (
     DailySummaryRead,
     DeficitReportRead,
     IngredientCreate,
+    IngredientNutritionSuggestionRead,
+    IngredientNutritionSuggestionRequest,
     LoginAuditRead,
     IngredientRead,
     IngredientUpdate,
@@ -27,6 +30,8 @@ from .schemas import (
     MealEntryUpdate,
     RecipeUpdate,
     RegisterRequest,
+    RecipeSuggestionRead,
+    RecipeSuggestionRequest,
     RecipeCreate,
     RecipeRead,
     UserRead,
@@ -76,6 +81,7 @@ def serialize_user(user: User) -> UserRead:
         name=user.name,
         email=user.email,
         is_admin=bool(user.is_admin),
+        ai_enabled=bool(user.ai_enabled),
         gender=user.gender,
         weight_kg=user.weight_kg,
         height_cm=user.height_cm,
@@ -163,6 +169,11 @@ def get_owned_meal_entry(meal_entry_id: int, current_user: User, db: Session) ->
     if not entry:
         raise HTTPException(status_code=404, detail="Meal entry not found")
     return entry
+
+
+def ensure_ai_enabled(current_user: User) -> None:
+    if not current_user.ai_enabled:
+        raise HTTPException(status_code=403, detail="AI mode is disabled for this user")
 
 
 @app.post("/auth/register", response_model=AuthResponse, status_code=201)
@@ -338,6 +349,9 @@ def admin_list_ingredients(
             user_email=email,
             name=ingredient.name,
             calories_per_100g=ingredient.calories_per_100g,
+            protein_per_100g=ingredient.protein_per_100g,
+            carbs_per_100g=ingredient.carbs_per_100g,
+            fat_per_100g=ingredient.fat_per_100g,
             created_at=ingredient.created_at,
         )
         for ingredient, email in rows
@@ -358,6 +372,9 @@ def admin_create_ingredient(
         user_id=current_admin.id,
         name=payload.name,
         calories_per_100g=payload.calories_per_100g,
+        protein_per_100g=payload.protein_per_100g,
+        carbs_per_100g=payload.carbs_per_100g,
+        fat_per_100g=payload.fat_per_100g,
     )
     db.add(ingredient)
     try:
@@ -372,6 +389,9 @@ def admin_create_ingredient(
         user_email=current_admin.email,
         name=ingredient.name,
         calories_per_100g=ingredient.calories_per_100g,
+        protein_per_100g=ingredient.protein_per_100g,
+        carbs_per_100g=ingredient.carbs_per_100g,
+        fat_per_100g=ingredient.fat_per_100g,
         created_at=ingredient.created_at,
     )
 
@@ -399,6 +419,12 @@ def admin_list_recipes(
                 total_yield_grams=recipe.total_yield_grams,
                 total_calories=serialized.total_calories,
                 calories_per_100g=serialized.calories_per_100g,
+                total_protein=serialized.total_protein,
+                protein_per_100g=serialized.protein_per_100g,
+                total_carbs=serialized.total_carbs,
+                carbs_per_100g=serialized.carbs_per_100g,
+                total_fat=serialized.total_fat,
+                fat_per_100g=serialized.fat_per_100g,
                 ingredient_count=len(recipe.ingredients),
                 created_at=recipe.created_at,
             )
@@ -439,6 +465,39 @@ def get_dashboard(
     ).unique().all()
 
     return build_daily_summary(current_user, entries, target_date)
+
+
+@app.get("/ai/status")
+def get_ai_status(current_user: User = Depends(get_current_user)) -> dict[str, bool]:
+    return {
+        "enabled": bool(current_user.ai_enabled),
+        "configured": gemini_is_configured(),
+    }
+
+
+@app.post("/ai/ingredient-nutrition", response_model=IngredientNutritionSuggestionRead)
+def suggest_ingredient_nutrition_endpoint(
+    payload: IngredientNutritionSuggestionRequest,
+    current_user: User = Depends(get_current_user),
+) -> IngredientNutritionSuggestionRead:
+    ensure_ai_enabled(current_user)
+    return IngredientNutritionSuggestionRead(**suggest_ingredient_nutrition(payload.name))
+
+
+@app.post("/ai/recipe-suggestions", response_model=list[RecipeSuggestionRead])
+def suggest_recipe_endpoint(
+    payload: RecipeSuggestionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[RecipeSuggestionRead]:
+    ensure_ai_enabled(current_user)
+    ingredients = db.scalars(select(Ingredient).order_by(Ingredient.name.asc())).all()
+    suggestions = suggest_recipes(
+        ingredients=ingredients,
+        only_existing_ingredients=payload.only_existing_ingredients,
+        prompt=payload.prompt,
+    )
+    return [RecipeSuggestionRead(**suggestion) for suggestion in suggestions]
 
 
 @app.get("/reports/deficit", response_model=DeficitReportRead)
@@ -521,6 +580,9 @@ def update_ingredient(
 
     ingredient.name = payload.name
     ingredient.calories_per_100g = payload.calories_per_100g
+    ingredient.protein_per_100g = payload.protein_per_100g
+    ingredient.carbs_per_100g = payload.carbs_per_100g
+    ingredient.fat_per_100g = payload.fat_per_100g
     db.add(ingredient)
     try:
         db.commit()
@@ -593,6 +655,7 @@ def create_recipe(
         raise HTTPException(status_code=400, detail=f"Missing ingredients: {missing_ids}")
 
     recipe = Recipe(name=payload.name, total_yield_grams=0, user_id=current_user.id)
+    recipe.instructions = payload.instructions
     db.add(recipe)
     db.flush()
 
@@ -651,6 +714,7 @@ def update_recipe(
         raise HTTPException(status_code=400, detail=f"Missing ingredients: {missing_ids}")
 
     recipe.name = payload.name
+    recipe.instructions = payload.instructions
     recipe.ingredients.clear()
     db.flush()
 

@@ -22,6 +22,11 @@ const viewOptions = [
 const reportPeriods = [7, 30, 90];
 const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
 const quickDateCount = 5;
+const macroFields = [
+  { key: "protein", field: "protein_per_100g", labelKey: "macros.proteinShort" },
+  { key: "carbs", field: "carbs_per_100g", labelKey: "macros.carbsShort" },
+  { key: "fat", field: "fat_per_100g", labelKey: "macros.fatShort" },
+];
 
 const emptyAuthForm = {
   name: "",
@@ -32,16 +37,23 @@ const emptyAuthForm = {
   height_cm: "",
   age: "",
   daily_calorie_goal: "",
+  ai_enabled: false,
 };
 
 const emptyIngredientForm = {
   name: "",
   calories_per_100g: "",
+  protein_per_100g: "",
+  carbs_per_100g: "",
+  fat_per_100g: "",
 };
 
 const emptyAdminIngredientForm = {
   name: "",
   calories_per_100g: "",
+  protein_per_100g: "",
+  carbs_per_100g: "",
+  fat_per_100g: "",
 };
 
 const emptyRecipeLine = {
@@ -52,7 +64,13 @@ const emptyRecipeLine = {
 
 const emptyRecipeForm = {
   name: "",
+  instructions: "",
   ingredients: [{ ...emptyRecipeLine }],
+};
+
+const emptyAiRecipeForm = {
+  only_existing_ingredients: true,
+  prompt: "",
 };
 
 const emptyMealForm = {
@@ -75,6 +93,7 @@ function App() {
     height_cm: "",
     age: "",
     daily_calorie_goal: "",
+    ai_enabled: false,
   });
   const [ingredients, setIngredients] = useState([]);
   const [recipes, setRecipes] = useState([]);
@@ -94,6 +113,8 @@ function App() {
   const [ingredientForm, setIngredientForm] = useState(emptyIngredientForm);
   const [adminIngredientForm, setAdminIngredientForm] = useState(emptyAdminIngredientForm);
   const [recipeForm, setRecipeForm] = useState(emptyRecipeForm);
+  const [aiRecipeForm, setAiRecipeForm] = useState(emptyAiRecipeForm);
+  const [recipeSuggestions, setRecipeSuggestions] = useState([]);
   const [mealForm, setMealForm] = useState(emptyMealForm);
   const [editingIngredientId, setEditingIngredientId] = useState(null);
   const [editingRecipeId, setEditingRecipeId] = useState(null);
@@ -187,6 +208,7 @@ function App() {
       height_cm: String(nextUser.height_cm),
       age: nextUser.age ? String(nextUser.age) : "",
       daily_calorie_goal: nextUser.daily_calorie_goal ? String(nextUser.daily_calorie_goal) : "",
+      ai_enabled: Boolean(nextUser.ai_enabled),
     });
   }
 
@@ -285,6 +307,7 @@ function App() {
         daily_calorie_goal: profileForm.daily_calorie_goal
           ? Number(profileForm.daily_calorie_goal)
           : null,
+        ai_enabled: Boolean(profileForm.ai_enabled),
       });
       setUser(updated);
       hydrateProfileForm(updated);
@@ -301,10 +324,7 @@ function App() {
     setSubmitting("ingredient");
     setError("");
     try {
-      const payload = {
-        ...ingredientForm,
-        calories_per_100g: Number(ingredientForm.calories_per_100g),
-      };
+      const payload = buildIngredientPayload(ingredientForm);
       if (editingIngredientId) {
         await api.updateIngredient(editingIngredientId, payload);
       } else {
@@ -325,10 +345,7 @@ function App() {
     setSubmitting("adminIngredient");
     setError("");
     try {
-      await api.adminCreateIngredient({
-        name: adminIngredientForm.name,
-        calories_per_100g: Number(adminIngredientForm.calories_per_100g),
-      });
+      await api.adminCreateIngredient(buildIngredientPayload(adminIngredientForm));
       setAdminIngredientForm(emptyAdminIngredientForm);
       await refreshAdminData();
       await refreshCoreData();
@@ -340,6 +357,61 @@ function App() {
     }
   }
 
+  async function handleSuggestIngredientNutrition() {
+    if (!ingredientForm.name.trim()) {
+      return;
+    }
+    setSubmitting("ingredientAi");
+    setError("");
+    try {
+      const suggestion = await api.suggestIngredientNutrition({ name: ingredientForm.name.trim() });
+      setIngredientForm((current) => ({
+        ...current,
+        calories_per_100g: String(suggestion.calories_per_100g),
+        protein_per_100g: String(suggestion.protein_per_100g),
+        carbs_per_100g: String(suggestion.carbs_per_100g),
+        fat_per_100g: String(suggestion.fat_per_100g),
+      }));
+    } catch (submitError) {
+      setError(submitError.message);
+    } finally {
+      setSubmitting("");
+    }
+  }
+
+  async function handleSuggestRecipes() {
+    setSubmitting("recipeAi");
+    setError("");
+    try {
+      const suggestions = await api.suggestRecipes({
+        only_existing_ingredients: aiRecipeForm.only_existing_ingredients,
+        prompt: aiRecipeForm.prompt || null,
+      });
+      setRecipeSuggestions(suggestions);
+    } catch (submitError) {
+      setError(submitError.message);
+    } finally {
+      setSubmitting("");
+    }
+  }
+
+  function useRecipeSuggestion(suggestion) {
+    const usableIngredients = suggestion.ingredients
+      .filter((item) => item.ingredient_id)
+      .map((item) => ({
+        ingredient_id: String(item.ingredient_id),
+        ingredient_query: item.ingredient_name,
+        amount_grams: String(item.amount_grams),
+      }));
+    setEditingRecipeId(null);
+    setRecipeForm({
+      name: suggestion.name,
+      instructions: suggestion.instructions || "",
+      ingredients: usableIngredients.length ? usableIngredients : [{ ...emptyRecipeLine }],
+    });
+    setCurrentView("recipes");
+  }
+
   async function handleRecipeSubmit(event) {
     event.preventDefault();
     setSubmitting("recipe");
@@ -347,6 +419,7 @@ function App() {
     try {
       const payload = {
         name: recipeForm.name,
+        instructions: recipeForm.instructions || null,
         ingredients: recipeForm.ingredients.map((item) => ({
           ingredient_id: Number(item.ingredient_id),
           amount_grams: Number(item.amount_grams),
@@ -462,6 +535,9 @@ function App() {
     setIngredientForm({
       name: ingredient.name,
       calories_per_100g: String(ingredient.calories_per_100g),
+      protein_per_100g: String(ingredient.protein_per_100g),
+      carbs_per_100g: String(ingredient.carbs_per_100g),
+      fat_per_100g: String(ingredient.fat_per_100g),
     });
     setCurrentView("ingredients");
   }
@@ -470,6 +546,7 @@ function App() {
     setEditingRecipeId(recipe.id);
     setRecipeForm({
       name: recipe.name,
+      instructions: recipe.instructions || "",
       ingredients: recipe.ingredients.map((item) => ({
         ingredient_id: String(item.ingredient_id),
         ingredient_query: item.ingredient_name,
@@ -756,6 +833,15 @@ function App() {
               <strong>{dashboard ? Math.round(dashboard.remaining_calories) : 0} {t("common.kcal")}</strong>
             </div>
           </div>
+          <MacroSummary
+            className="dashboard-macros"
+            values={{
+              protein: dashboard?.consumed_protein || 0,
+              carbs: dashboard?.consumed_carbs || 0,
+              fat: dashboard?.consumed_fat || 0,
+            }}
+            t={t}
+          />
 
           <div className="progress-card">
             <div className="progress-meta">
@@ -820,6 +906,15 @@ function App() {
                           <div>
                             <h3>{ingredient.name}</h3>
                             <p>{t("recipes.caloriesPer100g", { value: ingredient.calories_per_100g })}</p>
+                            <MacroSummary
+                              values={{
+                                protein: ingredient.protein_per_100g,
+                                carbs: ingredient.carbs_per_100g,
+                                fat: ingredient.fat_per_100g,
+                              }}
+                              suffix={t("macros.per100gSuffix")}
+                              t={t}
+                            />
                           </div>
                           <div className="inline-actions">
                             <button
@@ -853,14 +948,25 @@ function App() {
               >
                 <form className="stack-form" onSubmit={handleIngredientSubmit}>
                   <Field label={t("fields.ingredientName")}>
-                    <input
-                      placeholder={t("placeholders.ingredientName")}
-                      value={ingredientForm.name}
-                      onChange={(event) =>
-                        setIngredientForm({ ...ingredientForm, name: event.target.value })
-                      }
-                      required
-                    />
+                    <div className="ai-field-row">
+                      <input
+                        placeholder={t("placeholders.ingredientName")}
+                        value={ingredientForm.name}
+                        onChange={(event) =>
+                          setIngredientForm({ ...ingredientForm, name: event.target.value })
+                        }
+                        required
+                      />
+                      <button
+                        type="button"
+                        className="ai-square-button"
+                        onClick={handleSuggestIngredientNutrition}
+                        disabled={!user.ai_enabled || submitting === "ingredientAi" || !ingredientForm.name.trim()}
+                        title={user.ai_enabled ? t("ai.fillNutrition") : t("ai.disabled")}
+                      >
+                        {submitting === "ingredientAi" ? "..." : "AI"}
+                      </button>
+                    </div>
                   </Field>
                   <Field label={t("fields.caloriesPer100g")}>
                     <input
@@ -878,6 +984,7 @@ function App() {
                       required
                     />
                   </Field>
+                  <MacroInputs form={ingredientForm} setForm={setIngredientForm} t={t} />
                   <button type="submit" disabled={submitting === "ingredient"}>
                     {submitting === "ingredient"
                       ? t("common.saving")
@@ -935,11 +1042,81 @@ function App() {
                             count: recipe.ingredients.length,
                           })}
                         </p>
+                        {recipe.instructions ? (
+                          <p className="recipe-instructions">{recipe.instructions}</p>
+                        ) : null}
+                        <MacroSummary
+                          values={{
+                            protein: recipe.total_protein,
+                            carbs: recipe.total_carbs,
+                            fat: recipe.total_fat,
+                          }}
+                          t={t}
+                        />
                       </article>
                     ))
                   ) : (
                     <p className="empty-state">{t("recipes.empty")}</p>
                   )}
+                </div>
+              </Panel>
+              <Panel title={t("ai.recipeIdeasTitle")} subtitle={t("ai.recipeIdeasSubtitle")}>
+                <div className="ai-recipe-box">
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={aiRecipeForm.only_existing_ingredients}
+                      onChange={(event) =>
+                        setAiRecipeForm({
+                          ...aiRecipeForm,
+                          only_existing_ingredients: event.target.checked,
+                        })
+                      }
+                    />
+                    <span>{t("ai.onlyExistingIngredients")}</span>
+                  </label>
+                  <input
+                    placeholder={t("placeholders.recipeIdeaPrompt")}
+                    value={aiRecipeForm.prompt}
+                    onChange={(event) => setAiRecipeForm({ ...aiRecipeForm, prompt: event.target.value })}
+                  />
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={handleSuggestRecipes}
+                    disabled={!user.ai_enabled || submitting === "recipeAi"}
+                    title={user.ai_enabled ? t("ai.generateRecipes") : t("ai.disabled")}
+                  >
+                    {submitting === "recipeAi" ? t("ai.generating") : t("ai.generateRecipes")}
+                  </button>
+                  {recipeSuggestions.length ? (
+                    <div className="recipe-cards">
+                      {recipeSuggestions.map((suggestion, index) => (
+                        <article className="recipe-card" key={`${suggestion.name}-${index}`}>
+                          <div className="recipe-card-head">
+                            <div>
+                              <h3>{suggestion.name}</h3>
+                              <p>
+                                {t("common.items", {
+                                  count: suggestion.ingredients.length,
+                                })}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              className="secondary-button"
+                              onClick={() => useRecipeSuggestion(suggestion)}
+                            >
+                              {t("ai.useRecipe")}
+                            </button>
+                          </div>
+                          {suggestion.instructions ? (
+                            <p className="recipe-instructions">{suggestion.instructions}</p>
+                          ) : null}
+                        </article>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               </Panel>
             </div>
@@ -955,6 +1132,13 @@ function App() {
                       value={recipeForm.name}
                       onChange={(event) => setRecipeForm({ ...recipeForm, name: event.target.value })}
                       required
+                    />
+                  </Field>
+                  <Field label={t("fields.instructions")}>
+                    <textarea
+                      placeholder={t("placeholders.instructions")}
+                      value={recipeForm.instructions}
+                      onChange={(event) => setRecipeForm({ ...recipeForm, instructions: event.target.value })}
                     />
                   </Field>
                   <Field label={t("fields.calculatedTotalWeight")}>
@@ -1233,6 +1417,16 @@ function App() {
                       }
                     />
                   </Field>
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={profileForm.ai_enabled}
+                      onChange={(event) =>
+                        setProfileForm({ ...profileForm, ai_enabled: event.target.checked })
+                      }
+                    />
+                    <span>{t("profile.aiEnabled")}</span>
+                  </label>
                   <Field label={t("language.label")}>
                     <LanguageSwitcher
                       value={i18n.language}
@@ -1359,12 +1553,14 @@ function AdminPanel({
                   columns={[
                     t("fields.ingredientName"),
                     t("fields.caloriesPer100g"),
+                    t("macros.title"),
                     t("fields.email"),
                     t("admin.createdAt"),
                   ]}
                   rows={data.ingredients.map((item) => [
                     item.name,
                     `${item.calories_per_100g} ${t("common.kcal")}`,
+                    formatMacroText(item, t, "_per_100g", t("macros.per100gSuffix")),
                     item.user_email || "-",
                     new Date(item.created_at).toLocaleDateString(),
                   ])}
@@ -1401,6 +1597,7 @@ function AdminPanel({
                       required
                     />
                   </Field>
+                  <MacroInputs form={ingredientForm} setForm={setIngredientForm} t={t} />
                   <button type="submit" disabled={submitting === "adminIngredient"}>
                     {submitting === "adminIngredient" ? t("common.saving") : t("ingredients.addButton")}
                   </button>
@@ -1417,12 +1614,14 @@ function AdminPanel({
                 t("fields.recipeName"),
                 t("fields.email"),
                 t("admin.caloriesPer100g"),
+                t("macros.title"),
                 t("admin.ingredients"),
               ]}
               rows={data.recipes.map((item) => [
                 item.name,
                 item.user_email || "-",
                 Math.round(item.calories_per_100g),
+                formatMacroText(item, t),
                 item.ingredient_count,
               ])}
               emptyLabel={t("recipes.empty")}
@@ -1433,12 +1632,19 @@ function AdminPanel({
         {activeSection === "meals" ? (
           <Panel title={t("admin.meals")} subtitle={t("admin.mealsSubtitle")}>
             <AdminTable
-              columns={[t("fields.email"), t("fields.recipe"), t("fields.mealType"), t("fields.gramsEaten")]}
+              columns={[
+                t("fields.email"),
+                t("fields.recipe"),
+                t("fields.mealType"),
+                t("fields.gramsEaten"),
+                t("macros.title"),
+              ]}
               rows={data.mealEntries.map((item) => [
                 item.user_email || "-",
                 item.recipe_name,
                 t(`mealTypes.${item.meal_type}`),
                 `${Math.round(item.grams_eaten)} ${t("common.gramsShort")}`,
+                formatMacroText(item, t),
               ])}
               emptyLabel={t("overview.noMeals")}
             />
@@ -1503,6 +1709,10 @@ function MealGroups({ dashboard, onEdit, onDelete, t }) {
                         })
                       : t("meals.entrySummary", { grams: Math.round(entry.grams_eaten) })}
                   </p>
+                  <MacroSummary
+                    values={{ protein: entry.protein, carbs: entry.carbs, fat: entry.fat }}
+                    t={t}
+                  />
                 </div>
                 <div className="card-actions">
                   <span>{Math.round(entry.calories)} {t("common.kcal")}</span>
@@ -1545,6 +1755,39 @@ function Field({ label, children }) {
       <span className="field-label">{label}</span>
       {children}
     </label>
+  );
+}
+
+function MacroInputs({ form, setForm, t }) {
+  return (
+    <div className="macro-input-grid">
+      {macroFields.map((macro) => (
+        <Field key={macro.key} label={t(`fields.${macro.field}`)}>
+          <input
+            type="number"
+            step="0.1"
+            min="0"
+            placeholder={t(`placeholders.${macro.field}`)}
+            value={form[macro.field]}
+            onChange={(event) => setForm({ ...form, [macro.field]: event.target.value })}
+          />
+        </Field>
+      ))}
+    </div>
+  );
+}
+
+function MacroSummary({ values, suffix = "", className = "", t }) {
+  return (
+    <div className={className ? `macro-summary ${className}` : "macro-summary"}>
+      {macroFields.map((macro) => (
+        <span key={macro.key}>
+          {t(macro.labelKey)} {formatMacroValue(values[macro.key])}
+          {t("common.gramsShort")}
+          {suffix ? ` ${suffix}` : ""}
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -1626,6 +1869,33 @@ function findMealEntryCalories(mealEntryId, dashboard) {
     }
   }
   return 0;
+}
+
+function buildIngredientPayload(form) {
+  return {
+    name: form.name,
+    calories_per_100g: Number(form.calories_per_100g),
+    protein_per_100g: Number(form.protein_per_100g || 0),
+    carbs_per_100g: Number(form.carbs_per_100g || 0),
+    fat_per_100g: Number(form.fat_per_100g || 0),
+  };
+}
+
+function formatMacroText(values, t, suffix = "", suffixLabel = "") {
+  return macroFields
+    .map((macro) => {
+      const value =
+        values[`${macro.key}${suffix}`] ??
+        values[macro.key] ??
+        values[`total_${macro.key}`] ??
+        0;
+      return `${t(macro.labelKey)} ${formatMacroValue(value)}${t("common.gramsShort")}${suffixLabel ? ` ${suffixLabel}` : ""}`;
+    })
+    .join(" / ");
+}
+
+function formatMacroValue(value) {
+  return Math.round((Number(value) || 0) * 10) / 10;
 }
 
 export default App;

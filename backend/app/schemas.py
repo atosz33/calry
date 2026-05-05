@@ -25,12 +25,13 @@ class LoginRequest(BaseModel):
 
 
 class UserUpdate(UserBase):
-    pass
+    ai_enabled: bool = False
 
 
 class UserRead(UserBase):
     id: int
     is_admin: bool
+    ai_enabled: bool
     created_at: datetime
     daily_calorie_target: int
     estimated_daily_calories: int
@@ -68,6 +69,12 @@ class AdminRecipeRead(BaseModel):
     total_yield_grams: float
     total_calories: float
     calories_per_100g: float
+    total_protein: float
+    protein_per_100g: float
+    total_carbs: float
+    carbs_per_100g: float
+    total_fat: float
+    fat_per_100g: float
     ingredient_count: int
     created_at: datetime
 
@@ -75,6 +82,9 @@ class AdminRecipeRead(BaseModel):
 class IngredientCreate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     calories_per_100g: float = Field(ge=0)
+    protein_per_100g: float = Field(default=0, ge=0)
+    carbs_per_100g: float = Field(default=0, ge=0)
+    fat_per_100g: float = Field(default=0, ge=0)
 
 
 class IngredientUpdate(IngredientCreate):
@@ -100,6 +110,7 @@ class RecipeIngredientCreate(BaseModel):
 
 class RecipeCreate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
+    instructions: str | None = Field(default=None, max_length=4000)
     ingredients: list[RecipeIngredientCreate] = Field(min_length=1)
 
 
@@ -113,14 +124,24 @@ class RecipeIngredientRead(BaseModel):
     ingredient_name: str
     amount_grams: float
     calories: float
+    protein: float
+    carbs: float
+    fat: float
 
 
 class RecipeRead(BaseModel):
     id: int
     name: str
+    instructions: str | None
     total_yield_grams: float
     total_calories: float
     calories_per_100g: float
+    total_protein: float
+    protein_per_100g: float
+    total_carbs: float
+    carbs_per_100g: float
+    total_fat: float
+    fat_per_100g: float
     ingredients: list[RecipeIngredientRead]
     created_at: datetime
 
@@ -146,6 +167,9 @@ class MealEntryRead(BaseModel):
     date: date
     grams_eaten: float
     calories: float
+    protein: float
+    carbs: float
+    fat: float
     note: str | None
     created_at: datetime
 
@@ -157,6 +181,9 @@ class AdminMealEntryRead(MealEntryRead):
 class MealGroupRead(BaseModel):
     meal_type: MealType
     total_calories: float
+    total_protein: float
+    total_carbs: float
+    total_fat: float
     entries: list[MealEntryRead]
 
 
@@ -165,6 +192,9 @@ class DailySummaryRead(BaseModel):
     user_id: int
     calorie_target: int
     consumed_calories: float
+    consumed_protein: float
+    consumed_carbs: float
+    consumed_fat: float
     remaining_calories: float
     meals: list[MealGroupRead]
 
@@ -183,3 +213,33 @@ class DeficitReportRead(BaseModel):
     total_deficit: float
     average_daily_deficit: float
     entries: list[DeficitDayRead]
+
+
+class IngredientNutritionSuggestionRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+
+
+class IngredientNutritionSuggestionRead(BaseModel):
+    name: str
+    calories_per_100g: float
+    protein_per_100g: float
+    carbs_per_100g: float
+    fat_per_100g: float
+    note: str | None = None
+
+
+class RecipeSuggestionRequest(BaseModel):
+    only_existing_ingredients: bool = True
+    prompt: str | None = Field(default=None, max_length=500)
+
+
+class RecipeSuggestionIngredientRead(BaseModel):
+    ingredient_id: int | None = None
+    ingredient_name: str
+    amount_grams: float
+
+
+class RecipeSuggestionRead(BaseModel):
+    name: str
+    instructions: str | None = None
+    ingredients: list[RecipeSuggestionIngredientRead]

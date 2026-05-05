@@ -44,6 +44,8 @@ def migrate_legacy_schema() -> None:
             statements.append("ALTER TABLE users ADD COLUMN auth_token VARCHAR(255)")
         if "is_admin" not in user_columns:
             statements.append("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT 0")
+        if "ai_enabled" not in user_columns:
+            statements.append("ALTER TABLE users ADD COLUMN ai_enabled BOOLEAN DEFAULT 0")
         if "failed_login_attempts" not in user_columns:
             statements.append("ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER DEFAULT 0")
         if "locked_until" not in user_columns:
@@ -57,6 +59,12 @@ def migrate_legacy_schema() -> None:
         statements = []
         if "user_id" not in ingredient_columns:
             statements.append("ALTER TABLE ingredients ADD COLUMN user_id INTEGER")
+        if "protein_per_100g" not in ingredient_columns:
+            statements.append("ALTER TABLE ingredients ADD COLUMN protein_per_100g FLOAT DEFAULT 0 NOT NULL")
+        if "carbs_per_100g" not in ingredient_columns:
+            statements.append("ALTER TABLE ingredients ADD COLUMN carbs_per_100g FLOAT DEFAULT 0 NOT NULL")
+        if "fat_per_100g" not in ingredient_columns:
+            statements.append("ALTER TABLE ingredients ADD COLUMN fat_per_100g FLOAT DEFAULT 0 NOT NULL")
         _run_statements(statements)
         _migrate_name_unique_table("ingredients")
 
@@ -65,6 +73,8 @@ def migrate_legacy_schema() -> None:
         statements = []
         if "user_id" not in recipe_columns:
             statements.append("ALTER TABLE recipes ADD COLUMN user_id INTEGER")
+        if "instructions" not in recipe_columns:
+            statements.append("ALTER TABLE recipes ADD COLUMN instructions VARCHAR(4000)")
         _run_statements(statements)
         _migrate_name_unique_table("recipes")
 
@@ -95,12 +105,26 @@ def _migrate_name_unique_table(table_name: str) -> None:
             user_id INTEGER,
             name VARCHAR(120) NOT NULL,
             calories_per_100g FLOAT NOT NULL,
+            protein_per_100g FLOAT NOT NULL DEFAULT 0,
+            carbs_per_100g FLOAT NOT NULL DEFAULT 0,
+            fat_per_100g FLOAT NOT NULL DEFAULT 0,
             created_at DATETIME NOT NULL
         )
         """
         copy_sql = """
-        INSERT INTO ingredients_new (id, user_id, name, calories_per_100g, created_at)
-        SELECT id, user_id, name, calories_per_100g, created_at FROM ingredients
+        INSERT INTO ingredients_new (
+            id, user_id, name, calories_per_100g, protein_per_100g, carbs_per_100g, fat_per_100g, created_at
+        )
+        SELECT
+            id,
+            user_id,
+            name,
+            calories_per_100g,
+            COALESCE(protein_per_100g, 0),
+            COALESCE(carbs_per_100g, 0),
+            COALESCE(fat_per_100g, 0),
+            created_at
+        FROM ingredients
         """
         unique_name = "uq_ingredients_user_name"
     else:
@@ -109,13 +133,14 @@ def _migrate_name_unique_table(table_name: str) -> None:
             id INTEGER PRIMARY KEY,
             user_id INTEGER,
             name VARCHAR(120) NOT NULL,
+            instructions VARCHAR(4000),
             total_yield_grams FLOAT NOT NULL,
             created_at DATETIME NOT NULL
         )
         """
         copy_sql = """
-        INSERT INTO recipes_new (id, user_id, name, total_yield_grams, created_at)
-        SELECT id, user_id, name, total_yield_grams, created_at FROM recipes
+        INSERT INTO recipes_new (id, user_id, name, instructions, total_yield_grams, created_at)
+        SELECT id, user_id, name, instructions, total_yield_grams, created_at FROM recipes
         """
         unique_name = "uq_recipes_user_name"
 
