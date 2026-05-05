@@ -400,7 +400,8 @@ textarea {
 .panel-head p,
 .meal-group-header p,
 .entry-card p,
-.recipe-summary {
+.recipe-summary,
+.recipe-meta {
   margin: 6px 0 0;
   color: #68819f;
 }

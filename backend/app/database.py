@@ -66,6 +66,13 @@ def migrate_legacy_schema() -> None:
         if "fat_per_100g" not in ingredient_columns:
             statements.append("ALTER TABLE ingredients ADD COLUMN fat_per_100g FLOAT DEFAULT 0 NOT NULL")
         _run_statements(statements)
+
+    if "recipes" in existing_tables:
+        recipe_columns = {column["name"] for column in inspector.get_columns("recipes")}
+        statements = []
+        if "prep_time_minutes" not in recipe_columns:
+            statements.append("ALTER TABLE recipes ADD COLUMN prep_time_minutes INTEGER")
+        _run_statements(statements)
         _migrate_name_unique_table("ingredients")
 
     if "recipes" in existing_tables:
@@ -77,6 +84,24 @@ def migrate_legacy_schema() -> None:
             statements.append("ALTER TABLE recipes ADD COLUMN instructions VARCHAR(4000)")
         _run_statements(statements)
         _migrate_name_unique_table("recipes")
+
+    if "inventory_items" in existing_tables:
+        inventory_columns = {column["name"] for column in inspector.get_columns("inventory_items")}
+        statements = []
+        if "amount_grams" not in inventory_columns:
+            statements.append("ALTER TABLE inventory_items ADD COLUMN amount_grams FLOAT")
+        _run_statements(statements)
+
+    if "shopping_list_items" in existing_tables:
+        shopping_columns = {column["name"] for column in inspector.get_columns("shopping_list_items")}
+        statements = []
+        if "amount_grams" not in shopping_columns:
+            statements.append("ALTER TABLE shopping_list_items ADD COLUMN amount_grams FLOAT")
+        if "is_purchased" not in shopping_columns:
+            statements.append("ALTER TABLE shopping_list_items ADD COLUMN is_purchased BOOLEAN DEFAULT 0")
+        if "purchased_at" not in shopping_columns:
+            statements.append("ALTER TABLE shopping_list_items ADD COLUMN purchased_at DATETIME")
+        _run_statements(statements)
 
 
 def _run_statements(statements: list[str]) -> None:

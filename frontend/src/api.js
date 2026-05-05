@@ -36,7 +36,10 @@ function createClient() {
       let code = "";
       try {
         const payload = await response.json();
-        if (payload.detail && typeof payload.detail === "object") {
+        if (Array.isArray(payload.detail)) {
+          detail = payload.detail[0]?.msg || "Validation error";
+          code = "VALIDATION_ERROR";
+        } else if (payload.detail && typeof payload.detail === "object") {
           detail = payload.detail.message || detail;
           code = payload.detail.code || "";
         } else {
@@ -93,6 +96,31 @@ function createClient() {
       request(`/ingredients/${id}`, {
         method: "DELETE",
       }),
+    listInventoryItems: () => request("/inventory-items"),
+    createInventoryItem: (payload) =>
+      request("/inventory-items", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+    deleteInventoryItem: (id) =>
+      request(`/inventory-items/${id}`, {
+        method: "DELETE",
+      }),
+    listShoppingList: () => request("/shopping-list"),
+    createShoppingListItem: (payload) =>
+      request("/shopping-list", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+    purchaseShoppingListItem: (id) =>
+      request(`/shopping-list/${id}/purchase`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      }),
+    deleteShoppingListItem: (id) =>
+      request(`/shopping-list/${id}`, {
+        method: "DELETE",
+      }),
     listRecipes: () => request("/recipes"),
     createRecipe: (payload) =>
       request("/recipes", {
@@ -107,6 +135,11 @@ function createClient() {
     deleteRecipe: (id) =>
       request(`/recipes/${id}`, {
         method: "DELETE",
+      }),
+    prepareRecipe: (id, payload) =>
+      request(`/recipes/${id}/prepare`, {
+        method: "POST",
+        body: JSON.stringify(payload),
       }),
     suggestIngredientNutrition: (payload) =>
       request("/ai/ingredient-nutrition", {

@@ -13,6 +13,8 @@ const mealTypeOptions = [
 const viewOptions = [
   { value: "overview", labelKey: "nav.overview" },
   { value: "ingredients", labelKey: "nav.ingredients" },
+  { value: "inventory", labelKey: "nav.inventory" },
+  { value: "shopping", labelKey: "nav.shopping" },
   { value: "recipes", labelKey: "nav.recipes" },
   { value: "meals", labelKey: "nav.meals" },
   { value: "reports", labelKey: "nav.reports" },
@@ -22,6 +24,12 @@ const viewOptions = [
 const reportPeriods = [7, 30, 90];
 const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
 const quickDateCount = 5;
+const registrationNumberLimits = {
+  age: { min: 1, max: 120, decimals: 0 },
+  weight_kg: { min: 0.1, max: 1000, decimals: 1 },
+  height_cm: { min: 0.1, max: 300, decimals: 1 },
+  daily_calorie_goal: { min: 1, max: 10000, decimals: 0 },
+};
 const macroFields = [
   { key: "protein", field: "protein_per_100g", labelKey: "macros.proteinShort" },
   { key: "carbs", field: "carbs_per_100g", labelKey: "macros.carbsShort" },
@@ -37,7 +45,6 @@ const emptyAuthForm = {
   height_cm: "",
   age: "",
   daily_calorie_goal: "",
-  ai_enabled: false,
 };
 
 const emptyIngredientForm = {
@@ -46,6 +53,23 @@ const emptyIngredientForm = {
   protein_per_100g: "",
   carbs_per_100g: "",
   fat_per_100g: "",
+};
+
+const emptyInventoryForm = {
+  ingredient_id: "",
+  ingredient_query: "",
+  amount_grams: "",
+  create_new: false,
+  calories_per_100g: "",
+  protein_per_100g: "",
+  carbs_per_100g: "",
+  fat_per_100g: "",
+};
+
+const emptyShoppingForm = {
+  ingredient_id: "",
+  ingredient_query: "",
+  amount_grams: "",
 };
 
 const emptyAdminIngredientForm = {
@@ -65,6 +89,7 @@ const emptyRecipeLine = {
 const emptyRecipeForm = {
   name: "",
   instructions: "",
+  prep_time_minutes: "",
   ingredients: [{ ...emptyRecipeLine }],
 };
 
@@ -93,9 +118,10 @@ function App() {
     height_cm: "",
     age: "",
     daily_calorie_goal: "",
-    ai_enabled: false,
   });
   const [ingredients, setIngredients] = useState([]);
+  const [inventoryItems, setInventoryItems] = useState([]);
+  const [shoppingList, setShoppingList] = useState([]);
   const [recipes, setRecipes] = useState([]);
   const [dashboard, setDashboard] = useState(null);
   const [reports, setReports] = useState({});
@@ -111,6 +137,8 @@ function App() {
   const [currentView, setCurrentView] = useState("overview");
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [ingredientForm, setIngredientForm] = useState(emptyIngredientForm);
+  const [inventoryForm, setInventoryForm] = useState(emptyInventoryForm);
+  const [shoppingForm, setShoppingForm] = useState(emptyShoppingForm);
   const [adminIngredientForm, setAdminIngredientForm] = useState(emptyAdminIngredientForm);
   const [recipeForm, setRecipeForm] = useState(emptyRecipeForm);
   const [aiRecipeForm, setAiRecipeForm] = useState(emptyAiRecipeForm);
@@ -119,6 +147,8 @@ function App() {
   const [editingIngredientId, setEditingIngredientId] = useState(null);
   const [editingRecipeId, setEditingRecipeId] = useState(null);
   const [editingMealEntryId, setEditingMealEntryId] = useState(null);
+  const [activeRecipe, setActiveRecipe] = useState(null);
+  const [consumeInventory, setConsumeInventory] = useState(true);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState("");
   const [error, setError] = useState("");
@@ -208,17 +238,20 @@ function App() {
       height_cm: String(nextUser.height_cm),
       age: nextUser.age ? String(nextUser.age) : "",
       daily_calorie_goal: nextUser.daily_calorie_goal ? String(nextUser.daily_calorie_goal) : "",
-      ai_enabled: Boolean(nextUser.ai_enabled),
     });
   }
 
   async function refreshCoreData() {
-    const [ingredientData, recipeData, auditData] = await Promise.all([
+    const [ingredientData, inventoryData, shoppingData, recipeData, auditData] = await Promise.all([
       api.listIngredients(),
+      api.listInventoryItems(),
+      api.listShoppingList(),
       api.listRecipes(),
       api.getAuditLogs(),
     ]);
     setIngredients(ingredientData);
+    setInventoryItems(inventoryData);
+    setShoppingList(shoppingData);
     setRecipes(recipeData);
     setAuditLogs(auditData);
     await refreshDashboardAndReports(selectedDate);
@@ -260,8 +293,14 @@ function App() {
 
   async function handleAuthSubmit(event) {
     event.preventDefault();
-    setSubmitting("auth");
     setError("");
+    const registrationError = authMode === "register" ? validateRegistrationForm(authForm, t) : "";
+    if (registrationError) {
+      setError(registrationError);
+      return;
+    }
+
+    setSubmitting("auth");
     try {
       const action = authMode === "register" ? api.register : api.login;
       const payload =
@@ -291,6 +330,15 @@ function App() {
     } finally {
       setSubmitting("");
     }
+  }
+
+  function updateAuthNumberField(field, value) {
+    const limits = registrationNumberLimits[field];
+    if (!isAllowedNumberInput(value, limits)) {
+      return;
+    }
+
+    setAuthForm({ ...authForm, [field]: value });
   }
 
   async function handleProfileSubmit(event) {
@@ -336,6 +384,91 @@ function App() {
       setError(submitError.message);
     } finally {
       setSubmitting("");
+    }
+  }
+
+  async function handleInventorySubmit(event) {
+    event.preventDefault();
+    setSubmitting("inventory");
+    setError("");
+    try {
+      let ingredientId = inventoryForm.ingredient_id ? Number(inventoryForm.ingredient_id) : null;
+      if (!ingredientId && inventoryForm.create_new) {
+        const createdIngredient = await api.createIngredient({
+          name: inventoryForm.ingredient_query.trim(),
+          calories_per_100g: Number(inventoryForm.calories_per_100g),
+          protein_per_100g: Number(inventoryForm.protein_per_100g) || 0,
+          carbs_per_100g: Number(inventoryForm.carbs_per_100g) || 0,
+          fat_per_100g: Number(inventoryForm.fat_per_100g) || 0,
+        });
+        ingredientId = createdIngredient.id;
+        setIngredients((current) => [...current, createdIngredient].sort((a, b) => a.name.localeCompare(b.name)));
+      }
+
+      const created = await api.createInventoryItem({
+        ingredient_id: ingredientId,
+        name: ingredientId ? null : inventoryForm.ingredient_query.trim(),
+        amount_grams: inventoryForm.amount_grams ? Number(inventoryForm.amount_grams) : null,
+      });
+      setInventoryItems((current) => upsertById(current, created));
+      setInventoryForm(emptyInventoryForm);
+    } catch (submitError) {
+      setError(submitError.message);
+    } finally {
+      setSubmitting("");
+    }
+  }
+
+  async function handleShoppingSubmit(event) {
+    event.preventDefault();
+    setSubmitting("shopping");
+    setError("");
+    try {
+      const created = await api.createShoppingListItem({
+        ingredient_id: shoppingForm.ingredient_id ? Number(shoppingForm.ingredient_id) : null,
+        name: shoppingForm.ingredient_query.trim(),
+        amount_grams: shoppingForm.amount_grams ? Number(shoppingForm.amount_grams) : null,
+      });
+      setShoppingList((current) => [created, ...current]);
+      setShoppingForm(emptyShoppingForm);
+    } catch (submitError) {
+      setError(submitError.message);
+    } finally {
+      setSubmitting("");
+    }
+  }
+
+  async function handlePurchaseShoppingItem(id) {
+    setSubmitting(`purchase:${id}`);
+    setError("");
+    try {
+      await api.purchaseShoppingListItem(id);
+      setShoppingList((current) => current.filter((item) => item.id !== id));
+      setInventoryItems(await api.listInventoryItems());
+    } catch (submitError) {
+      setError(submitError.message);
+    } finally {
+      setSubmitting("");
+    }
+  }
+
+  async function handleDeleteInventoryItem(id) {
+    setError("");
+    try {
+      await api.deleteInventoryItem(id);
+      setInventoryItems((current) => current.filter((item) => item.id !== id));
+    } catch (submitError) {
+      setError(submitError.message);
+    }
+  }
+
+  async function handleDeleteShoppingItem(id) {
+    setError("");
+    try {
+      await api.deleteShoppingListItem(id);
+      setShoppingList((current) => current.filter((item) => item.id !== id));
+    } catch (submitError) {
+      setError(submitError.message);
     }
   }
 
@@ -432,6 +565,7 @@ function App() {
     setRecipeForm({
       name: suggestion.name,
       instructions: suggestion.instructions || "",
+      prep_time_minutes: suggestion.prep_time_minutes ? String(suggestion.prep_time_minutes) : "",
       ingredients: usableIngredients.length ? usableIngredients : [{ ...emptyRecipeLine }],
     });
     setCurrentView("recipes");
@@ -445,6 +579,7 @@ function App() {
       const payload = {
         name: recipeForm.name,
         instructions: recipeForm.instructions || null,
+        prep_time_minutes: recipeForm.prep_time_minutes ? Number(recipeForm.prep_time_minutes) : null,
         ingredients: recipeForm.ingredients.map((item) => ({
           ingredient_id: Number(item.ingredient_id),
           amount_grams: Number(item.amount_grams),
@@ -458,6 +593,26 @@ function App() {
       resetRecipeForm();
       await refreshCoreData();
       setCurrentView("recipes");
+    } catch (submitError) {
+      setError(submitError.message);
+    } finally {
+      setSubmitting("");
+    }
+  }
+
+  async function handlePrepareActiveRecipe() {
+    if (!activeRecipe) {
+      return;
+    }
+    setSubmitting("prepareRecipe");
+    setError("");
+    try {
+      const updatedInventory = await api.prepareRecipe(activeRecipe.id, {
+        consume_inventory: consumeInventory,
+      });
+      setInventoryItems(updatedInventory);
+      setActiveRecipe(null);
+      setConsumeInventory(true);
     } catch (submitError) {
       setError(submitError.message);
     } finally {
@@ -572,6 +727,7 @@ function App() {
     setRecipeForm({
       name: recipe.name,
       instructions: recipe.instructions || "",
+      prep_time_minutes: recipe.prep_time_minutes ? String(recipe.prep_time_minutes) : "",
       ingredients: recipe.ingredients.map((item) => ({
         ingredient_id: String(item.ingredient_id),
         ingredient_query: item.ingredient_name,
@@ -627,6 +783,29 @@ function App() {
     }));
   }
 
+  function updateInventoryIngredientQuery(value) {
+    const match = ingredients.find(
+      (ingredient) => ingredient.name.toLocaleLowerCase() === value.toLocaleLowerCase()
+    );
+    setInventoryForm((current) => ({
+      ...current,
+      ingredient_query: value,
+      ingredient_id: match?.id || "",
+      create_new: match ? false : current.create_new,
+    }));
+  }
+
+  function updateShoppingIngredientQuery(value) {
+    const match = ingredients.find(
+      (ingredient) => ingredient.name.toLocaleLowerCase() === value.toLocaleLowerCase()
+    );
+    setShoppingForm((current) => ({
+      ...current,
+      ingredient_query: value,
+      ingredient_id: match?.id || "",
+    }));
+  }
+
   function removeRecipeLine(index) {
     setRecipeForm((current) => ({
       ...current,
@@ -667,6 +846,8 @@ function App() {
     setReports({});
     setAuditLogs([]);
     setIngredients([]);
+    setInventoryItems([]);
+    setShoppingList([]);
     setRecipes([]);
     setAdminData({ users: [], ingredients: [], recipes: [], mealEntries: [] });
     setError(typeof reason === "string" ? reason : "");
@@ -713,41 +894,50 @@ function App() {
                     <option value="female">{t("gender.female")}</option>
                   </select>
                   <input
-                    type="number"
+                    type="text"
+                    inputMode="numeric"
+                    min="1"
+                    max="120"
                     placeholder={t("fields.age")}
                     value={authForm.age}
-                    onChange={(event) => setAuthForm({ ...authForm, age: event.target.value })}
+                    onChange={(event) => updateAuthNumberField("age", event.target.value)}
                   />
                 </div>
                 <div className="form-row">
                   <input
-                    type="number"
-                    step="0.1"
+                    type="text"
+                    inputMode="decimal"
+                    min="0.1"
+                    max="1000"
                     placeholder={t("fields.weightKg")}
                     value={authForm.weight_kg}
                     onChange={(event) =>
-                      setAuthForm({ ...authForm, weight_kg: event.target.value })
+                      updateAuthNumberField("weight_kg", event.target.value)
                     }
                     required
                   />
                   <input
-                    type="number"
-                    step="0.1"
+                    type="text"
+                    inputMode="decimal"
+                    min="0.1"
+                    max="300"
                     placeholder={t("fields.heightCm")}
                     value={authForm.height_cm}
                     onChange={(event) =>
-                      setAuthForm({ ...authForm, height_cm: event.target.value })
+                      updateAuthNumberField("height_cm", event.target.value)
                     }
                     required
                   />
                 </div>
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
                   min="1"
+                  max="10000"
                   placeholder={t("fields.dailyCalorieGoalOptional")}
                   value={authForm.daily_calorie_goal}
                   onChange={(event) =>
-                    setAuthForm({ ...authForm, daily_calorie_goal: event.target.value })
+                    updateAuthNumberField("daily_calorie_goal", event.target.value)
                   }
                 />
               </>
@@ -1028,9 +1218,221 @@ function App() {
           </section>
         ) : null}
 
+        {currentView === "inventory" ? (
+          <section className="content-grid">
+            <div className="main-column">
+              <Panel title={t("inventory.title")} subtitle={t("inventory.subtitle")}>
+                <div className="recipe-cards">
+                  {inventoryItems.length ? (
+                    inventoryItems.map((item) => (
+                      <article className="recipe-card" key={item.id}>
+                        <div className="recipe-card-head">
+                          <div>
+                            <h3>{item.name}</h3>
+                            <p>{formatInventoryAmount(item.amount_grams, t)}</p>
+                          </div>
+                          <button
+                            type="button"
+                            className="danger-button"
+                            onClick={() => handleDeleteInventoryItem(item.id)}
+                          >
+                            {t("common.delete")}
+                          </button>
+                        </div>
+                      </article>
+                    ))
+                  ) : (
+                    <p className="empty-state">{t("inventory.empty")}</p>
+                  )}
+                </div>
+              </Panel>
+            </div>
+            <aside className="side-column">
+              <Panel title={t("inventory.addTitle")} subtitle={t("inventory.addSubtitle")}>
+                <form className="stack-form" onSubmit={handleInventorySubmit}>
+                  <Field label={t("fields.ingredientName")}>
+                    <input
+                      list="inventory-ingredient-options"
+                      placeholder={t("placeholders.ingredientName")}
+                      value={inventoryForm.ingredient_query}
+                      onChange={(event) => updateInventoryIngredientQuery(event.target.value)}
+                      required
+                    />
+                    <datalist id="inventory-ingredient-options">
+                      {findMatchingIngredients(ingredients, inventoryForm.ingredient_query).map((ingredient) => (
+                        <option key={ingredient.id} value={ingredient.name} />
+                      ))}
+                    </datalist>
+                  </Field>
+                  {!inventoryForm.ingredient_id ? (
+                    <label className="checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={inventoryForm.create_new}
+                        onChange={(event) =>
+                          setInventoryForm({ ...inventoryForm, create_new: event.target.checked })
+                        }
+                      />
+                      <span>{t("inventory.createIngredient")}</span>
+                    </label>
+                  ) : null}
+                  {inventoryForm.create_new && !inventoryForm.ingredient_id ? (
+                    <>
+                      <Field label={t("fields.caloriesPer100g")}>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.1"
+                          placeholder={t("placeholders.caloriesPer100g")}
+                          value={inventoryForm.calories_per_100g}
+                          onChange={(event) =>
+                            setInventoryForm({ ...inventoryForm, calories_per_100g: event.target.value })
+                          }
+                          required
+                        />
+                      </Field>
+                      <MacroInputs form={inventoryForm} setForm={setInventoryForm} t={t} />
+                    </>
+                  ) : null}
+                  <Field label={t("fields.amountInGramsOptional")}>
+                    <input
+                      type="number"
+                      min="0.1"
+                      step="0.1"
+                      placeholder={t("placeholders.amountInGramsOptional")}
+                      value={inventoryForm.amount_grams}
+                      onChange={(event) => setInventoryForm({ ...inventoryForm, amount_grams: event.target.value })}
+                    />
+                  </Field>
+                  <button type="submit" disabled={submitting === "inventory"}>
+                    {submitting === "inventory" ? t("common.saving") : t("inventory.addButton")}
+                  </button>
+                </form>
+              </Panel>
+            </aside>
+          </section>
+        ) : null}
+
+        {currentView === "shopping" ? (
+          <section className="content-grid">
+            <div className="main-column">
+              <Panel title={t("shopping.title")} subtitle={t("shopping.subtitle")}>
+                <div className="recipe-cards">
+                  {shoppingList.length ? (
+                    shoppingList.map((item) => (
+                      <article className="recipe-card" key={item.id}>
+                        <div className="recipe-card-head">
+                          <div>
+                            <h3>{item.name}</h3>
+                            <p>{formatInventoryAmount(item.amount_grams, t)}</p>
+                          </div>
+                          <div className="inline-actions">
+                            {!item.is_purchased ? (
+                              <button
+                                type="button"
+                                className="secondary-button"
+                                disabled={submitting === `purchase:${item.id}`}
+                                onClick={() => handlePurchaseShoppingItem(item.id)}
+                              >
+                                {t("shopping.purchasedButton")}
+                              </button>
+                            ) : (
+                              <span className="panel-tag">{t("shopping.purchased")}</span>
+                            )}
+                            <button
+                              type="button"
+                              className="danger-button"
+                              onClick={() => handleDeleteShoppingItem(item.id)}
+                            >
+                              {t("common.delete")}
+                            </button>
+                          </div>
+                        </div>
+                      </article>
+                    ))
+                  ) : (
+                    <p className="empty-state">{t("shopping.empty")}</p>
+                  )}
+                </div>
+              </Panel>
+            </div>
+            <aside className="side-column">
+              <Panel title={t("shopping.addTitle")} subtitle={t("shopping.addSubtitle")}>
+                <form className="stack-form" onSubmit={handleShoppingSubmit}>
+                  <Field label={t("fields.ingredientName")}>
+                    <input
+                      list="shopping-ingredient-options"
+                      placeholder={t("placeholders.ingredientName")}
+                      value={shoppingForm.ingredient_query}
+                      onChange={(event) => updateShoppingIngredientQuery(event.target.value)}
+                      required
+                    />
+                    <datalist id="shopping-ingredient-options">
+                      {findMatchingIngredients(ingredients, shoppingForm.ingredient_query).map((ingredient) => (
+                        <option key={ingredient.id} value={ingredient.name} />
+                      ))}
+                    </datalist>
+                  </Field>
+                  <Field label={t("fields.amountInGramsOptional")}>
+                    <input
+                      type="number"
+                      min="0.1"
+                      step="0.1"
+                      placeholder={t("placeholders.amountInGramsOptional")}
+                      value={shoppingForm.amount_grams}
+                      onChange={(event) => setShoppingForm({ ...shoppingForm, amount_grams: event.target.value })}
+                    />
+                  </Field>
+                  <button type="submit" disabled={submitting === "shopping"}>
+                    {submitting === "shopping" ? t("common.saving") : t("shopping.addButton")}
+                  </button>
+                </form>
+              </Panel>
+            </aside>
+          </section>
+        ) : null}
+
         {currentView === "recipes" ? (
           <section className="content-grid">
             <div className="main-column">
+              {activeRecipe ? (
+                <Panel title={activeRecipe.name} subtitle={t("recipes.activeRecipe")}>
+                  {activeRecipe.prep_time_minutes ? (
+                    <p className="recipe-meta">
+                      {t("recipes.prepTimeValue", { value: activeRecipe.prep_time_minutes })}
+                    </p>
+                  ) : null}
+                  <p className="recipe-summary">
+                    {t("recipes.ingredientSummary", {
+                      count: activeRecipe.ingredients.length,
+                      ingredients: formatIngredientNames(activeRecipe.ingredients),
+                    })}
+                  </p>
+                  {activeRecipe.instructions ? (
+                    <p className="recipe-instructions">{activeRecipe.instructions}</p>
+                  ) : null}
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={consumeInventory}
+                      onChange={(event) => setConsumeInventory(event.target.checked)}
+                    />
+                    <span>{t("recipes.consumeInventory")}</span>
+                  </label>
+                  <div className="inline-actions">
+                    <button
+                      type="button"
+                      onClick={handlePrepareActiveRecipe}
+                      disabled={submitting === "prepareRecipe"}
+                    >
+                      {submitting === "prepareRecipe" ? t("common.saving") : t("recipes.preparedButton")}
+                    </button>
+                    <button type="button" className="ghost-button" onClick={() => setActiveRecipe(null)}>
+                      {t("common.cancelEditing")}
+                    </button>
+                  </div>
+                </Panel>
+              ) : null}
               <Panel title={t("recipes.title")} subtitle={t("recipes.subtitle")}>
                 <div className="recipe-cards">
                   {recipes.length ? (
@@ -1053,6 +1455,16 @@ function App() {
                               </button>
                               <button
                                 type="button"
+                                className="secondary-button"
+                                onClick={() => {
+                                  setActiveRecipe(recipe);
+                                  setConsumeInventory(true);
+                                }}
+                              >
+                                {t("recipes.activeRecipe")}
+                              </button>
+                              <button
+                                type="button"
                                 className="danger-button"
                                 onClick={() => handleDeleteRecipe(recipe.id)}
                               >
@@ -1065,8 +1477,12 @@ function App() {
                           {t("recipes.totalCaloriesFromIngredients", {
                             calories: Math.round(recipe.total_calories),
                             count: recipe.ingredients.length,
+                            ingredients: formatIngredientNames(recipe.ingredients),
                           })}
                         </p>
+                        {recipe.prep_time_minutes ? (
+                          <p className="recipe-meta">{t("recipes.prepTimeValue", { value: recipe.prep_time_minutes })}</p>
+                        ) : null}
                         {recipe.instructions ? (
                           <p className="recipe-instructions">{recipe.instructions}</p>
                         ) : null}
@@ -1122,10 +1538,14 @@ function App() {
                             <div>
                               <h3>{suggestion.name}</h3>
                               <p>
-                                {t("common.items", {
+                                {t("recipes.ingredientSummary", {
                                   count: suggestion.ingredients.length,
+                                  ingredients: formatIngredientNames(suggestion.ingredients),
                                 })}
                               </p>
+                              {suggestion.prep_time_minutes ? (
+                                <p>{t("recipes.prepTimeValue", { value: suggestion.prep_time_minutes })}</p>
+                              ) : null}
                             </div>
                             <button
                               type="button"
@@ -1164,6 +1584,18 @@ function App() {
                       placeholder={t("placeholders.instructions")}
                       value={recipeForm.instructions}
                       onChange={(event) => setRecipeForm({ ...recipeForm, instructions: event.target.value })}
+                    />
+                  </Field>
+                  <Field label={t("fields.prepTimeMinutes")}>
+                    <input
+                      type="number"
+                      min="1"
+                      max="1440"
+                      placeholder={t("placeholders.prepTimeMinutes")}
+                      value={recipeForm.prep_time_minutes}
+                      onChange={(event) =>
+                        setRecipeForm({ ...recipeForm, prep_time_minutes: event.target.value })
+                      }
                     />
                   </Field>
                   <Field label={t("fields.calculatedTotalWeight")}>
@@ -1442,15 +1874,6 @@ function App() {
                       }
                     />
                   </Field>
-                  <label className="checkbox-row">
-                    <input
-                      type="checkbox"
-                      checked={profileForm.ai_enabled}
-                      disabled
-                      readOnly
-                    />
-                    <span>{t("profile.aiEnabled")}</span>
-                  </label>
                   <Field label={t("language.label")}>
                     <LanguageSwitcher
                       value={i18n.language}
@@ -1656,6 +2079,7 @@ function AdminPanel({
               columns={[
                 t("fields.recipeName"),
                 t("fields.email"),
+                t("fields.prepTimeMinutes"),
                 t("admin.caloriesPer100g"),
                 t("macros.title"),
                 t("admin.ingredients"),
@@ -1663,6 +2087,7 @@ function AdminPanel({
               rows={data.recipes.map((item) => [
                 item.name,
                 item.user_email || "-",
+                item.prep_time_minutes ? t("recipes.prepTimeValue", { value: item.prep_time_minutes }) : "-",
                 Math.round(item.calories_per_100g),
                 formatMacroText(item, t),
                 item.ingredient_count,
@@ -1846,6 +2271,71 @@ function LanguageSwitcher({ value, options, onChange }) {
       </select>
     </div>
   );
+}
+
+function isAllowedNumberInput(value, limits) {
+  if (value === "") {
+    return true;
+  }
+
+  const decimals = limits.decimals || 0;
+  const pattern = decimals > 0
+    ? new RegExp(`^\\d+(\\.\\d{0,${decimals}})?$`)
+    : /^\d+$/;
+
+  if (!pattern.test(value)) {
+    return false;
+  }
+
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) && numericValue <= limits.max;
+}
+
+function validateRegistrationForm(form, t) {
+  const checks = [
+    { field: "age", label: t("fields.age"), optional: true },
+    { field: "weight_kg", label: t("fields.weightKg") },
+    { field: "height_cm", label: t("fields.heightCm") },
+    { field: "daily_calorie_goal", label: t("fields.dailyCalorieGoal"), optional: true },
+  ];
+
+  for (const check of checks) {
+    const value = form[check.field];
+    const limits = registrationNumberLimits[check.field];
+    if (check.optional && value === "") {
+      continue;
+    }
+
+    const numericValue = Number(value);
+    if (!value || !Number.isFinite(numericValue) || numericValue < limits.min || numericValue > limits.max) {
+      return t("validation.numberRange", {
+        field: check.label,
+        min: limits.min,
+        max: limits.max,
+      });
+    }
+  }
+
+  return "";
+}
+
+function formatIngredientNames(ingredients) {
+  return ingredients
+    .map((ingredient) => ingredient.ingredient_name)
+    .filter(Boolean)
+    .join(", ");
+}
+
+function formatInventoryAmount(amount, t) {
+  return amount ? t("inventory.amountValue", { value: Math.round(amount) }) : t("inventory.unknownAmount");
+}
+
+function upsertById(items, nextItem) {
+  const exists = items.some((item) => item.id === nextItem.id);
+  if (exists) {
+    return items.map((item) => (item.id === nextItem.id ? nextItem : item));
+  }
+  return [nextItem, ...items];
 }
 
 function labelMealType(mealType, t) {

@@ -85,6 +85,7 @@ def serialize_recipe(recipe: Recipe) -> RecipeRead:
         id=recipe.id,
         name=recipe.name,
         instructions=recipe.instructions,
+        prep_time_minutes=recipe.prep_time_minutes,
         total_yield_grams=recipe_total_yield_grams(recipe),
         total_calories=recipe_total_calories(recipe),
         calories_per_100g=recipe_calories_per_100g(recipe),

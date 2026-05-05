@@ -50,11 +50,13 @@ def suggest_recipes(
     ingredients: list[Ingredient],
     only_existing_ingredients: bool,
     prompt: str | None,
+    available_amounts: dict[int, float | None] | None = None,
     language: str = "en",
 ) -> list[dict[str, Any]]:
     language_name = _language_name(language)
+    available_amounts = available_amounts or {}
     ingredient_lines = "\n".join(
-        f"- id={ingredient.id}; name={ingredient.name}; kcal={ingredient.calories_per_100g}; "
+        f"- id={ingredient.id}; name={ingredient.name}; available_grams={_format_amount(available_amounts.get(ingredient.id))}; kcal={ingredient.calories_per_100g}; "
         f"protein={ingredient.protein_per_100g}; carbs={ingredient.carbs_per_100g}; fat={ingredient.fat_per_100g}"
         for ingredient in ingredients
     )
@@ -65,11 +67,14 @@ def suggest_recipes(
     )
     extra_prompt = prompt or "No extra preference."
     request_prompt = f"""
-Create 3 practical recipe ideas for a calorie tracking app.
+Create 3 practical recipe ideas for a calorie tracking app from the user's home inventory.
 The user interface language is {language_name}. Interpret ingredient names and user preference in that language first.
-Return recipe names and instructions in {language_name}.
+Return recipe names and instructions in {language_name}. Do not return English recipe names or instructions unless the language is English.
+Instructions must be a useful, moderately detailed preparation description with 3-5 concrete steps in one string.
+Estimate the active plus passive preparation time in minutes.
+If available_grams is a number, do not use more than that amount for that ingredient. If available_grams is unknown, use a reasonable amount.
 {mode}
-Available ingredients:
+Home inventory:
 {ingredient_lines or "- none"}
 User preference: {extra_prompt}
 
@@ -78,7 +83,8 @@ Return only JSON with this shape:
   "recipes": [
     {{
       "name": "Recipe name",
-      "instructions": "Short preparation steps.",
+      "instructions": "Detailed preparation steps.",
+      "prep_time_minutes": 25,
       "ingredients": [
         {{"ingredient_id": 1, "ingredient_name": "Exact ingredient name", "amount_grams": 100}}
       ]
@@ -136,6 +142,7 @@ Return only JSON with this shape:
                     "instructions": raw_recipe.get("instructions")
                     if isinstance(raw_recipe.get("instructions"), str)
                     else None,
+                    "prep_time_minutes": _optional_int(raw_recipe.get("prep_time_minutes"), 1, 1440),
                     "ingredients": normalized_ingredients,
                 }
             )
@@ -211,6 +218,10 @@ def _language_name(language: str) -> str:
     }.get(normalized, normalized)
 
 
+def _format_amount(value: float | None) -> str:
+    return "unknown" if value is None else str(value)
+
+
 def _non_negative_number(value: Any) -> float:
     try:
         return round(max(0.0, float(value)), 2)
@@ -223,3 +234,13 @@ def _positive_number(value: Any) -> float:
         return round(max(0.0, float(value)), 2)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _optional_int(value: Any, minimum: int, maximum: int) -> int | None:
+    try:
+        parsed = int(float(value))
+    except (TypeError, ValueError):
+        return None
+    if parsed < minimum or parsed > maximum:
+        return None
+    return parsed

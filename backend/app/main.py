@@ -1,6 +1,9 @@
 from datetime import date, timedelta
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select
@@ -16,7 +19,17 @@ from .ai import (
     suggest_ingredient_nutrition,
     suggest_recipes,
 )
-from .models import AiUsageLog, Ingredient, LoginAudit, MealEntry, Recipe, RecipeIngredient, User
+from .models import (
+    AiUsageLog,
+    Ingredient,
+    InventoryItem,
+    LoginAudit,
+    MealEntry,
+    Recipe,
+    RecipeIngredient,
+    ShoppingListItem,
+    User,
+)
 from .schemas import (
     AuthResponse,
     AdminIngredientRead,
@@ -29,6 +42,8 @@ from .schemas import (
     IngredientCreate,
     IngredientNutritionSuggestionRead,
     IngredientNutritionSuggestionRequest,
+    InventoryItemCreate,
+    InventoryItemRead,
     LoginAuditRead,
     IngredientRead,
     IngredientUpdate,
@@ -40,8 +55,11 @@ from .schemas import (
     RegisterRequest,
     RecipeSuggestionRead,
     RecipeSuggestionRequest,
+    RecipePrepareRequest,
     RecipeCreate,
     RecipeRead,
+    ShoppingListItemCreate,
+    ShoppingListItemRead,
     UserRead,
     UserUpdate,
 )
@@ -76,6 +94,29 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
+    errors = exc.errors()
+    first_error = errors[0] if errors else {}
+    field_path = ".".join(str(part) for part in first_error.get("loc", []) if part != "body")
+    field_label = field_path or "request"
+    message = f"Invalid value for {field_label}."
+    public_errors = [
+        {key: value for key, value in error.items() if key != "input"}
+        for error in errors
+    ]
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={
+            "detail": {
+                "code": "VALIDATION_ERROR",
+                "message": message,
+                "errors": jsonable_encoder(public_errors),
+            }
+        },
+    )
 
 
 @app.get("/health")
@@ -163,6 +204,30 @@ def get_ingredient(ingredient_id: int, db: Session) -> Ingredient:
     return ingredient
 
 
+def get_owned_inventory_item(item_id: int, current_user: User, db: Session) -> InventoryItem:
+    item = db.scalar(
+        select(InventoryItem).where(
+            InventoryItem.id == item_id,
+            InventoryItem.user_id == current_user.id,
+        )
+    )
+    if not item:
+        raise HTTPException(status_code=404, detail="Inventory item not found")
+    return item
+
+
+def get_owned_shopping_item(item_id: int, current_user: User, db: Session) -> ShoppingListItem:
+    item = db.scalar(
+        select(ShoppingListItem).where(
+            ShoppingListItem.id == item_id,
+            ShoppingListItem.user_id == current_user.id,
+        )
+    )
+    if not item:
+        raise HTTPException(status_code=404, detail="Shopping list item not found")
+    return item
+
+
 def get_owned_meal_entry(meal_entry_id: int, current_user: User, db: Session) -> MealEntry:
     entry = (
         db.execute(
@@ -219,6 +284,63 @@ def get_ai_usage_counts(db: Session) -> dict[int, dict[str, int]]:
     for user_id, request_type, count in rows:
         counts.setdefault(user_id, {})[request_type] = count
     return counts
+
+
+def resolve_inventory_payload(
+    payload: InventoryItemCreate,
+    db: Session,
+) -> tuple[int | None, str, float | None]:
+    ingredient_id = payload.ingredient_id
+    if ingredient_id is not None:
+        ingredient = get_ingredient(ingredient_id, db)
+        return ingredient.id, ingredient.name, payload.amount_grams
+
+    name = (payload.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+    return None, name, payload.amount_grams
+
+
+def add_inventory_item(
+    current_user: User,
+    ingredient_id: int | None,
+    name: str,
+    amount_grams: float | None,
+    db: Session,
+) -> InventoryItem:
+    existing = None
+    if ingredient_id is not None:
+        existing = db.scalar(
+            select(InventoryItem).where(
+                InventoryItem.user_id == current_user.id,
+                InventoryItem.ingredient_id == ingredient_id,
+            )
+        )
+
+    if existing:
+        if existing.amount_grams is None or amount_grams is None:
+            existing.amount_grams = None
+        else:
+            existing.amount_grams = round(existing.amount_grams + amount_grams, 2)
+        db.add(existing)
+        return existing
+
+    item = InventoryItem(
+        user_id=current_user.id,
+        ingredient_id=ingredient_id,
+        name=name.strip(),
+        amount_grams=amount_grams,
+    )
+    db.add(item)
+    return item
+
+
+def inventory_items_query(current_user: User):
+    return (
+        select(InventoryItem)
+        .where(InventoryItem.user_id == current_user.id)
+        .order_by(InventoryItem.created_at.desc())
+    )
 
 
 @app.post("/auth/register", response_model=AuthResponse, status_code=201)
@@ -512,6 +634,7 @@ def admin_list_recipes(
                 user_id=recipe.user_id,
                 user_email=email,
                 name=recipe.name,
+                prep_time_minutes=recipe.prep_time_minutes,
                 total_yield_grams=recipe.total_yield_grams,
                 total_calories=serialized.total_calories,
                 calories_per_100g=serialized.calories_per_100g,
@@ -597,10 +720,26 @@ def suggest_recipe_endpoint(
     current_user: User = Depends(get_current_user),
 ) -> list[RecipeSuggestionRead]:
     ensure_ai_enabled(current_user)
-    ingredients = db.scalars(select(Ingredient).order_by(Ingredient.name.asc())).all()
+    inventory_items = db.scalars(
+        select(InventoryItem)
+        .where(InventoryItem.user_id == current_user.id)
+        .order_by(InventoryItem.name.asc())
+    ).all()
+    ingredient_ids = [item.ingredient_id for item in inventory_items if item.ingredient_id is not None]
+    ingredients = db.scalars(
+        select(Ingredient)
+        .where(Ingredient.id.in_(ingredient_ids))
+        .order_by(Ingredient.name.asc())
+    ).all() if ingredient_ids else []
+    amount_by_ingredient_id = {
+        item.ingredient_id: item.amount_grams
+        for item in inventory_items
+        if item.ingredient_id is not None
+    }
     try:
         suggestions = suggest_recipes(
             ingredients=ingredients,
+            available_amounts=amount_by_ingredient_id,
             only_existing_ingredients=payload.only_existing_ingredients,
             prompt=payload.prompt,
             language=payload.language,
@@ -612,6 +751,97 @@ def suggest_recipe_endpoint(
 
     create_ai_usage_log(db, current_user, "recipe", "success")
     return response
+
+
+@app.get("/inventory-items", response_model=list[InventoryItemRead])
+def list_inventory_items(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[InventoryItem]:
+    return db.scalars(inventory_items_query(current_user)).all()
+
+
+@app.post("/inventory-items", response_model=InventoryItemRead, status_code=201)
+def create_inventory_item(
+    payload: InventoryItemCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> InventoryItem:
+    ingredient_id, name, amount_grams = resolve_inventory_payload(payload, db)
+    item = add_inventory_item(current_user, ingredient_id, name, amount_grams, db)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@app.delete("/inventory-items/{item_id}", status_code=204)
+def delete_inventory_item(
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    item = get_owned_inventory_item(item_id, current_user, db)
+    db.delete(item)
+    db.commit()
+
+
+@app.get("/shopping-list", response_model=list[ShoppingListItemRead])
+def list_shopping_list(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[ShoppingListItem]:
+    return db.scalars(
+        select(ShoppingListItem)
+        .where(ShoppingListItem.user_id == current_user.id)
+        .order_by(ShoppingListItem.is_purchased.asc(), ShoppingListItem.created_at.desc())
+    ).all()
+
+
+@app.post("/shopping-list", response_model=ShoppingListItemRead, status_code=201)
+def create_shopping_list_item(
+    payload: ShoppingListItemCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ShoppingListItem:
+    ingredient_id = payload.ingredient_id
+    name = payload.name.strip()
+    if ingredient_id is not None:
+        ingredient = get_ingredient(ingredient_id, db)
+        name = ingredient.name
+
+    item = ShoppingListItem(
+        user_id=current_user.id,
+        ingredient_id=ingredient_id,
+        name=name,
+        amount_grams=payload.amount_grams,
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@app.post("/shopping-list/{item_id}/purchase", status_code=204)
+def purchase_shopping_list_item(
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    item = get_owned_shopping_item(item_id, current_user, db)
+    add_inventory_item(current_user, item.ingredient_id, item.name, item.amount_grams, db)
+    db.delete(item)
+    db.commit()
+
+
+@app.delete("/shopping-list/{item_id}", status_code=204)
+def delete_shopping_list_item(
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    item = get_owned_shopping_item(item_id, current_user, db)
+    db.delete(item)
+    db.commit()
 
 
 @app.get("/reports/deficit", response_model=DeficitReportRead)
@@ -768,8 +998,13 @@ def create_recipe(
     if missing_ids:
         raise HTTPException(status_code=400, detail=f"Missing ingredients: {missing_ids}")
 
-    recipe = Recipe(name=payload.name, total_yield_grams=0, user_id=current_user.id)
-    recipe.instructions = payload.instructions
+    recipe = Recipe(
+        name=payload.name,
+        instructions=payload.instructions,
+        prep_time_minutes=payload.prep_time_minutes,
+        total_yield_grams=0,
+        user_id=current_user.id,
+    )
     db.add(recipe)
     db.flush()
 
@@ -829,6 +1064,7 @@ def update_recipe(
 
     recipe.name = payload.name
     recipe.instructions = payload.instructions
+    recipe.prep_time_minutes = payload.prep_time_minutes
     recipe.ingredients.clear()
     db.flush()
 
@@ -873,6 +1109,34 @@ def delete_recipe(
         )
     db.delete(recipe)
     db.commit()
+
+
+@app.post("/recipes/{recipe_id}/prepare", response_model=list[InventoryItemRead])
+def prepare_recipe(
+    recipe_id: int,
+    payload: RecipePrepareRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[InventoryItem]:
+    recipe = get_owned_recipe(recipe_id, current_user, db)
+    if payload.consume_inventory:
+        for recipe_item in recipe.ingredients:
+            inventory_item = db.scalar(
+                select(InventoryItem).where(
+                    InventoryItem.user_id == current_user.id,
+                    InventoryItem.ingredient_id == recipe_item.ingredient_id,
+                )
+            )
+            if not inventory_item:
+                continue
+            if inventory_item.amount_grams is None or inventory_item.amount_grams <= recipe_item.amount_grams:
+                db.delete(inventory_item)
+            else:
+                inventory_item.amount_grams = round(inventory_item.amount_grams - recipe_item.amount_grams, 2)
+                db.add(inventory_item)
+
+    db.commit()
+    return db.scalars(inventory_items_query(current_user)).all()
 
 
 @app.get("/meal-entries", response_model=list[MealEntryRead])

@@ -43,6 +43,8 @@ class User(Base):
 
     ingredients: Mapped[list["Ingredient"]] = relationship(back_populates="user")
     recipes: Mapped[list["Recipe"]] = relationship(back_populates="user")
+    inventory_items: Mapped[list["InventoryItem"]] = relationship(back_populates="user")
+    shopping_list_items: Mapped[list["ShoppingListItem"]] = relationship(back_populates="user")
     meal_entries: Mapped[list["MealEntry"]] = relationship(back_populates="user")
     login_audits: Mapped[list["LoginAudit"]] = relationship(back_populates="user")
     ai_usage_logs: Mapped[list["AiUsageLog"]] = relationship(back_populates="user")
@@ -63,6 +65,38 @@ class Ingredient(Base):
 
     user: Mapped["User"] = relationship(back_populates="ingredients")
     recipe_ingredients: Mapped[list["RecipeIngredient"]] = relationship(back_populates="ingredient")
+    inventory_items: Mapped[list["InventoryItem"]] = relationship(back_populates="ingredient")
+    shopping_list_items: Mapped[list["ShoppingListItem"]] = relationship(back_populates="ingredient")
+
+
+class InventoryItem(Base):
+    __tablename__ = "inventory_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    ingredient_id: Mapped[int | None] = mapped_column(ForeignKey("ingredients.id"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    amount_grams: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    user: Mapped["User"] = relationship(back_populates="inventory_items")
+    ingredient: Mapped["Ingredient | None"] = relationship(back_populates="inventory_items")
+
+
+class ShoppingListItem(Base):
+    __tablename__ = "shopping_list_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    ingredient_id: Mapped[int | None] = mapped_column(ForeignKey("ingredients.id"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    amount_grams: Mapped[float | None] = mapped_column(Float, nullable=True)
+    is_purchased: Mapped[bool] = mapped_column(Boolean, default=False)
+    purchased_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    user: Mapped["User"] = relationship(back_populates="shopping_list_items")
+    ingredient: Mapped["Ingredient | None"] = relationship(back_populates="shopping_list_items")
 
 
 class Recipe(Base):
@@ -73,6 +107,7 @@ class Recipe(Base):
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(120))
     instructions: Mapped[str | None] = mapped_column(String(4000), nullable=True)
+    prep_time_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_yield_grams: Mapped[float] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

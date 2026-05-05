@@ -9,10 +9,12 @@ class UserBase(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     email: str = Field(min_length=5, max_length=255)
     gender: Gender
-    weight_kg: float = Field(gt=0)
-    height_cm: float = Field(gt=0)
+    weight_kg: float = Field(gt=0, le=1000)
+    height_cm: float = Field(gt=0, le=300)
     age: int | None = Field(default=None, ge=1, le=120)
     daily_calorie_goal: int | None = Field(default=None, ge=1, le=10000)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class RegisterRequest(UserBase):
@@ -25,7 +27,7 @@ class LoginRequest(BaseModel):
 
 
 class UserUpdate(UserBase):
-    pass
+    model_config = ConfigDict(extra="forbid")
 
 
 class UserRead(UserBase):
@@ -66,12 +68,15 @@ class AdminUserRead(UserRead):
 class AdminUserUpdate(BaseModel):
     ai_enabled: bool
 
+    model_config = ConfigDict(extra="forbid")
+
 
 class AdminRecipeRead(BaseModel):
     id: int
     user_id: int | None
     user_email: str | None
     name: str
+    prep_time_minutes: int | None
     total_yield_grams: float
     total_calories: float
     calories_per_100g: float
@@ -104,6 +109,40 @@ class IngredientRead(IngredientCreate):
     model_config = ConfigDict(from_attributes=True)
 
 
+class InventoryItemCreate(BaseModel):
+    ingredient_id: int | None = None
+    name: str | None = Field(default=None, min_length=2, max_length=120)
+    amount_grams: float | None = Field(default=None, gt=0, le=100000)
+
+
+class InventoryItemRead(BaseModel):
+    id: int
+    ingredient_id: int | None
+    name: str
+    amount_grams: float | None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ShoppingListItemCreate(BaseModel):
+    ingredient_id: int | None = None
+    name: str = Field(min_length=2, max_length=120)
+    amount_grams: float | None = Field(default=None, gt=0, le=100000)
+
+
+class ShoppingListItemRead(BaseModel):
+    id: int
+    ingredient_id: int | None
+    name: str
+    amount_grams: float | None
+    is_purchased: bool
+    purchased_at: datetime | None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class AdminIngredientRead(IngredientRead):
     user_id: int | None
     user_email: str | None
@@ -117,6 +156,7 @@ class RecipeIngredientCreate(BaseModel):
 class RecipeCreate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     instructions: str | None = Field(default=None, max_length=4000)
+    prep_time_minutes: int | None = Field(default=None, ge=1, le=1440)
     ingredients: list[RecipeIngredientCreate] = Field(min_length=1)
 
 
@@ -139,6 +179,7 @@ class RecipeRead(BaseModel):
     id: int
     name: str
     instructions: str | None
+    prep_time_minutes: int | None
     total_yield_grams: float
     total_calories: float
     calories_per_100g: float
@@ -241,6 +282,10 @@ class RecipeSuggestionRequest(BaseModel):
     language: str = Field(default="en", min_length=2, max_length=10)
 
 
+class RecipePrepareRequest(BaseModel):
+    consume_inventory: bool = True
+
+
 class RecipeSuggestionIngredientRead(BaseModel):
     ingredient_id: int | None = None
     ingredient_name: str
@@ -250,4 +295,5 @@ class RecipeSuggestionIngredientRead(BaseModel):
 class RecipeSuggestionRead(BaseModel):
     name: str
     instructions: str | None = None
+    prep_time_minutes: int | None = None
     ingredients: list[RecipeSuggestionIngredientRead]
