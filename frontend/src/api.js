@@ -122,6 +122,11 @@ function createClient() {
     getDeficitReport: (days, endDate) =>
       request(`/reports/deficit?days=${days}&end_date=${endDate}`),
     adminListUsers: () => request("/admin/users"),
+    adminUpdateUser: (id, payload) =>
+      request(`/admin/users/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      }),
     adminListIngredients: () => request("/admin/ingredients"),
     adminCreateIngredient: (payload) =>
       request("/admin/ingredients", {

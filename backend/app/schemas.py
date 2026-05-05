@@ -61,6 +61,10 @@ class AdminUserRead(UserRead):
     meal_entry_count: int
 
 
+class AdminUserUpdate(BaseModel):
+    ai_enabled: bool
+
+
 class AdminRecipeRead(BaseModel):
     id: int
     user_id: int | None

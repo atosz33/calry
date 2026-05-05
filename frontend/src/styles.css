@@ -771,6 +771,22 @@ textarea {
   border-bottom: 0;
 }
 
+.admin-checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: #24344a;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.admin-checkbox-row input {
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0;
+}
+
 .empty-state {
   margin: 0;
   color: #6f859f;

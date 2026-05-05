@@ -357,6 +357,28 @@ function App() {
     }
   }
 
+  async function handleAdminUserAiToggle(userId, aiEnabled) {
+    setSubmitting(`adminUserAi:${userId}`);
+    setError("");
+    try {
+      const updatedUser = await api.adminUpdateUser(userId, { ai_enabled: aiEnabled });
+      setAdminData((currentData) => ({
+        ...currentData,
+        users: currentData.users.map((adminUser) =>
+          adminUser.id === userId ? updatedUser : adminUser
+        ),
+      }));
+      if (user?.id === userId) {
+        setUser(updatedUser);
+        hydrateProfileForm(updatedUser);
+      }
+    } catch (submitError) {
+      setError(submitError.message);
+    } finally {
+      setSubmitting("");
+    }
+  }
+
   async function handleSuggestIngredientNutrition() {
     if (!ingredientForm.name.trim()) {
       return;
@@ -1472,6 +1494,7 @@ function App() {
             ingredientForm={adminIngredientForm}
             setIngredientForm={setAdminIngredientForm}
             onIngredientSubmit={handleAdminIngredientSubmit}
+            onUserAiToggle={handleAdminUserAiToggle}
             submitting={submitting}
             t={t}
           />
@@ -1502,6 +1525,7 @@ function AdminPanel({
   ingredientForm,
   setIngredientForm,
   onIngredientSubmit,
+  onUserAiToggle,
   submitting,
   t,
 }) {
@@ -1533,11 +1557,20 @@ function AdminPanel({
         {activeSection === "users" ? (
           <Panel title={t("admin.users")} subtitle={t("admin.usersSubtitle")}>
             <AdminTable
-              columns={[t("fields.name"), t("fields.email"), t("admin.role"), t("admin.content")]}
+              columns={[t("fields.name"), t("fields.email"), t("admin.role"), t("admin.aiIntegration"), t("admin.content")]}
               rows={data.users.map((item) => [
                 item.name,
                 item.email,
                 item.is_admin ? t("admin.adminRole") : t("admin.userRole"),
+                <label className="admin-checkbox-row" key={`ai-${item.id}`}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(item.ai_enabled)}
+                    disabled={submitting === `adminUserAi:${item.id}`}
+                    onChange={(event) => onUserAiToggle(item.id, event.target.checked)}
+                  />
+                  <span>{item.ai_enabled ? t("admin.enabled") : t("admin.disabled")}</span>
+                </label>,
                 `${item.ingredient_count} / ${item.recipe_count} / ${item.meal_entry_count}`,
               ])}
               emptyLabel={t("admin.empty")}

@@ -16,6 +16,7 @@ from .schemas import (
     AdminMealEntryRead,
     AdminRecipeRead,
     AdminUserRead,
+    AdminUserUpdate,
     DailySummaryRead,
     DeficitReportRead,
     IngredientCreate,
@@ -330,6 +331,34 @@ def admin_list_users(
         )
         for user in users
     ]
+
+
+@app.patch("/admin/users/{user_id}", response_model=AdminUserRead)
+def admin_update_user(
+    user_id: int,
+    payload: AdminUserUpdate,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+) -> AdminUserRead:
+    target_user = db.get(User, user_id)
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    target_user.ai_enabled = payload.ai_enabled
+    db.add(target_user)
+    db.commit()
+    db.refresh(target_user)
+
+    ingredient_count = db.scalar(select(func.count(Ingredient.id)).where(Ingredient.user_id == target_user.id)) or 0
+    recipe_count = db.scalar(select(func.count(Recipe.id)).where(Recipe.user_id == target_user.id)) or 0
+    meal_entry_count = db.scalar(select(func.count(MealEntry.id)).where(MealEntry.user_id == target_user.id)) or 0
+
+    return AdminUserRead(
+        **serialize_user(target_user).model_dump(),
+        ingredient_count=ingredient_count,
+        recipe_count=recipe_count,
+        meal_entry_count=meal_entry_count,
+    )
 
 
 @app.get("/admin/ingredients", response_model=list[AdminIngredientRead])
