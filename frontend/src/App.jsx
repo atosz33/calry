@@ -169,10 +169,39 @@ function App() {
   const [submitting, setSubmitting] = useState("");
   const [error, setError] = useState("");
   const inactivityTimerRef = useRef(null);
+  const purchaseNutritionDialogRef = useRef(null);
+  const purchaseNutritionFirstInputRef = useRef(null);
+  const purchaseNutritionPreviousFocusRef = useRef(null);
+  const purchaseNutritionModalOpen = Boolean(purchaseNutritionForm);
 
   useEffect(() => {
     bootstrap();
   }, []);
+
+  useEffect(() => {
+    if (!purchaseNutritionModalOpen) {
+      return undefined;
+    }
+
+    purchaseNutritionPreviousFocusRef.current = document.activeElement;
+    purchaseNutritionFirstInputRef.current?.focus();
+
+    function handleDialogKeyDown(event) {
+      if (event.key === "Escape") {
+        setPurchaseNutritionForm(null);
+      }
+    }
+
+    document.addEventListener("keydown", handleDialogKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleDialogKeyDown);
+      const previousFocus = purchaseNutritionPreviousFocusRef.current;
+      if (previousFocus && typeof previousFocus.focus === "function" && document.contains(previousFocus)) {
+        previousFocus.focus();
+      }
+      purchaseNutritionPreviousFocusRef.current = null;
+    };
+  }, [purchaseNutritionModalOpen]);
 
   useEffect(() => {
     if (!user) {
@@ -518,6 +547,29 @@ function App() {
       setError(submitError.message);
     } finally {
       setSubmitting("");
+    }
+  }
+
+  function handlePurchaseNutritionDialogKeyDown(event) {
+    if (event.key !== "Tab" || !purchaseNutritionDialogRef.current) {
+      return;
+    }
+
+    const focusableElements = purchaseNutritionDialogRef.current.querySelectorAll(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+    );
+    if (!focusableElements.length) {
+      return;
+    }
+
+    const firstElement = focusableElements[0];
+    const lastElement = focusableElements[focusableElements.length - 1];
+    if (event.shiftKey && document.activeElement === firstElement) {
+      event.preventDefault();
+      lastElement.focus();
+    } else if (!event.shiftKey && document.activeElement === lastElement) {
+      event.preventDefault();
+      firstElement.focus();
     }
   }
 
@@ -2115,7 +2167,14 @@ function App() {
 
         {purchaseNutritionForm ? (
           <div className="modal-backdrop" role="presentation">
-            <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="purchase-nutrition-title">
+            <section
+              ref={purchaseNutritionDialogRef}
+              className="modal-panel"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="purchase-nutrition-title"
+              onKeyDown={handlePurchaseNutritionDialogKeyDown}
+            >
               <div className="panel-head">
                 <div>
                   <h2 id="purchase-nutrition-title">{t("shopping.nutritionTitle")}</h2>
@@ -2125,6 +2184,7 @@ function App() {
               <form className="stack-form" onSubmit={handlePurchaseNutritionSubmit}>
                 <Field label={t("fields.ingredientName")}>
                   <input
+                    ref={purchaseNutritionFirstInputRef}
                     value={purchaseNutritionForm.name}
                     onChange={(event) =>
                       setPurchaseNutritionForm({ ...purchaseNutritionForm, name: event.target.value })

@@ -57,7 +57,7 @@ class Ingredient(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(120))
-    brand: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    brand: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     calories_per_100g: Mapped[float] = mapped_column(Float)
     protein_per_100g: Mapped[float] = mapped_column(Float, default=0)
     carbs_per_100g: Mapped[float] = mapped_column(Float, default=0)

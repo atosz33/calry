@@ -60,7 +60,7 @@ def migrate_legacy_schema() -> None:
         if "user_id" not in ingredient_columns:
             statements.append("ALTER TABLE ingredients ADD COLUMN user_id INTEGER")
         if "brand" not in ingredient_columns:
-            statements.append("ALTER TABLE ingredients ADD COLUMN brand VARCHAR(120)")
+            statements.append("ALTER TABLE ingredients ADD COLUMN brand VARCHAR(120) NOT NULL DEFAULT ''")
         if "protein_per_100g" not in ingredient_columns:
             statements.append("ALTER TABLE ingredients ADD COLUMN protein_per_100g FLOAT DEFAULT 0 NOT NULL")
         if "carbs_per_100g" not in ingredient_columns:
@@ -132,7 +132,7 @@ def _migrate_name_unique_table(table_name: str) -> None:
             id INTEGER PRIMARY KEY,
             user_id INTEGER,
             name VARCHAR(120) NOT NULL,
-            brand VARCHAR(120),
+            brand VARCHAR(120) NOT NULL DEFAULT '',
             calories_per_100g FLOAT NOT NULL,
             protein_per_100g FLOAT NOT NULL DEFAULT 0,
             carbs_per_100g FLOAT NOT NULL DEFAULT 0,
@@ -148,7 +148,7 @@ def _migrate_name_unique_table(table_name: str) -> None:
             id,
             user_id,
             name,
-            brand,
+            COALESCE(brand, ''),
             calories_per_100g,
             COALESCE(protein_per_100g, 0),
             COALESCE(carbs_per_100g, 0),
@@ -193,6 +193,8 @@ def _migrate_ingredient_brand_unique() -> None:
     if "ingredients" not in inspector.get_table_names():
         return
 
+    ingredient_columns = {column["name"]: column for column in inspector.get_columns("ingredients")}
+    brand_is_nullable = ingredient_columns.get("brand", {}).get("nullable", True)
     unique_constraints = inspector.get_unique_constraints("ingredients")
     indexes = inspector.get_indexes("ingredients")
     has_name_brand_unique = any(
@@ -210,7 +212,7 @@ def _migrate_ingredient_brand_unique() -> None:
         for index in indexes
     )
 
-    if has_name_brand_unique and not has_legacy_user_name_unique:
+    if has_name_brand_unique and not has_legacy_user_name_unique and not brand_is_nullable:
         return
 
     create_sql = """
@@ -218,7 +220,7 @@ def _migrate_ingredient_brand_unique() -> None:
         id INTEGER PRIMARY KEY,
         user_id INTEGER,
         name VARCHAR(120) NOT NULL,
-        brand VARCHAR(120),
+        brand VARCHAR(120) NOT NULL DEFAULT '',
         calories_per_100g FLOAT NOT NULL,
         protein_per_100g FLOAT NOT NULL DEFAULT 0,
         carbs_per_100g FLOAT NOT NULL DEFAULT 0,
@@ -234,7 +236,7 @@ def _migrate_ingredient_brand_unique() -> None:
         id,
         user_id,
         name,
-        brand,
+        COALESCE(brand, ''),
         calories_per_100g,
         COALESCE(protein_per_100g, 0),
         COALESCE(carbs_per_100g, 0),

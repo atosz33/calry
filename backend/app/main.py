@@ -7,7 +7,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -318,19 +318,16 @@ def resolve_inventory_payload(
     return None, name, payload.amount_grams
 
 
-def normalize_optional_text(value: str | None) -> str | None:
+def normalize_optional_text(value: str | None) -> str:
     if value is None:
-        return None
+        return ""
     stripped = value.strip()
-    return stripped or None
+    return stripped
 
 
-def ingredient_duplicate_query(name: str, brand: str | None, ingredient_id: int | None = None):
+def ingredient_duplicate_query(name: str, brand: str, ingredient_id: int | None = None):
     conditions = [Ingredient.name.ilike(name.strip())]
-    if brand is None:
-        conditions.append(or_(Ingredient.brand.is_(None), Ingredient.brand == ""))
-    else:
-        conditions.append(Ingredient.brand.ilike(brand))
+    conditions.append(Ingredient.brand.ilike(brand))
     if ingredient_id is not None:
         conditions.append(Ingredient.id != ingredient_id)
     return select(Ingredient).where(*conditions)
