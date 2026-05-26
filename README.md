@@ -40,6 +40,7 @@ The app will be available on:
 ## Notes
 
 - `age` is optional. If provided, daily calorie estimation uses Mifflin-St Jeor. Otherwise a simpler weight/height-based estimate is used.
+- CORS is restricted to local frontend origins by default. Set `CORS_ORIGINS` as a comma-separated list when the API must be called from other browser origins.
 - AI mode is disabled by default per user. Set `GEMINI_API_KEY` for the backend container, and optionally `GEMINI_MODEL` (defaults to `gemini-3.1-flash-preview`).
 - If you already ran an older local version, legacy SQLite columns are handled for compatibility, but old anonymous users are not converted into email/password accounts automatically.
 

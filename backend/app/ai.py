@@ -56,18 +56,21 @@ def suggest_recipes(
     language_name = _language_name(language)
     available_amounts = available_amounts or {}
     ingredient_lines = "\n".join(
-        f"- id={ingredient.id}; name={ingredient.name}; available_grams={_format_amount(available_amounts.get(ingredient.id))}; kcal={ingredient.calories_per_100g}; "
+        f"- id={ingredient.id}; name={_ingredient_display_name(ingredient)}; available_grams={_format_amount(available_amounts.get(ingredient.id))}; kcal={ingredient.calories_per_100g}; "
         f"protein={ingredient.protein_per_100g}; carbs={ingredient.carbs_per_100g}; fat={ingredient.fat_per_100g}"
         for ingredient in ingredients
     )
     mode = (
         "Use only ingredients from the list. Each returned ingredient must include the matching ingredient_id."
         if only_existing_ingredients
-        else "Prefer ingredients from the list, but you may add new common ingredients with ingredient_id null."
+        else (
+            "Create complete practical recipes. Prefer ingredients from the list when useful, "
+            "but add common missing ingredients with ingredient_id null when they improve the recipe."
+        )
     )
     extra_prompt = prompt or "No extra preference."
     request_prompt = f"""
-Create 3 practical recipe ideas for a calorie tracking app from the user's home inventory.
+Create exactly 3 practical recipe ideas for a calorie tracking app.
 The user interface language is {language_name}. Interpret ingredient names and user preference in that language first.
 Return recipe names and instructions in {language_name}. Do not return English recipe names or instructions unless the language is English.
 Instructions must be a useful, moderately detailed preparation description with 3-5 concrete steps in one string.
@@ -121,7 +124,7 @@ Return only JSON with this shape:
             if only_existing_ingredients and ingredient_id is None:
                 continue
             ingredient_name = (
-                ingredient_by_id[ingredient_id].name
+                _ingredient_display_name(ingredient_by_id[ingredient_id])
                 if ingredient_id is not None
                 else str(raw_item.get("ingredient_name") or "").strip()
             )
@@ -220,6 +223,10 @@ def _language_name(language: str) -> str:
 
 def _format_amount(value: float | None) -> str:
     return "unknown" if value is None else str(value)
+
+
+def _ingredient_display_name(ingredient: Ingredient) -> str:
+    return f"{ingredient.name} ({ingredient.brand})" if ingredient.brand else ingredient.name
 
 
 def _non_negative_number(value: Any) -> float:

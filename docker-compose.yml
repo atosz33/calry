@@ -9,6 +9,7 @@ services:
       - ./backend/data:/data
     environment:
       DATABASE_URL: sqlite:////data/calry.db
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081,http://127.0.0.1:8081}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.1-flash-preview}
 

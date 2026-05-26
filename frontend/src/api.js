@@ -112,10 +112,10 @@ function createClient() {
         method: "POST",
         body: JSON.stringify(payload),
       }),
-    purchaseShoppingListItem: (id) =>
+    purchaseShoppingListItem: (id, payload = {}) =>
       request(`/shopping-list/${id}/purchase`, {
         method: "POST",
-        body: JSON.stringify({}),
+        body: JSON.stringify(payload),
       }),
     deleteShoppingListItem: (id) =>
       request(`/shopping-list/${id}`, {

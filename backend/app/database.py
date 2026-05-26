@@ -59,6 +59,8 @@ def migrate_legacy_schema() -> None:
         statements = []
         if "user_id" not in ingredient_columns:
             statements.append("ALTER TABLE ingredients ADD COLUMN user_id INTEGER")
+        if "brand" not in ingredient_columns:
+            statements.append("ALTER TABLE ingredients ADD COLUMN brand VARCHAR(120) NOT NULL DEFAULT ''")
         if "protein_per_100g" not in ingredient_columns:
             statements.append("ALTER TABLE ingredients ADD COLUMN protein_per_100g FLOAT DEFAULT 0 NOT NULL")
         if "carbs_per_100g" not in ingredient_columns:
@@ -66,6 +68,7 @@ def migrate_legacy_schema() -> None:
         if "fat_per_100g" not in ingredient_columns:
             statements.append("ALTER TABLE ingredients ADD COLUMN fat_per_100g FLOAT DEFAULT 0 NOT NULL")
         _run_statements(statements)
+        _migrate_ingredient_brand_unique()
 
     if "recipes" in existing_tables:
         recipe_columns = {column["name"] for column in inspector.get_columns("recipes")}
@@ -129,6 +132,7 @@ def _migrate_name_unique_table(table_name: str) -> None:
             id INTEGER PRIMARY KEY,
             user_id INTEGER,
             name VARCHAR(120) NOT NULL,
+            brand VARCHAR(120) NOT NULL DEFAULT '',
             calories_per_100g FLOAT NOT NULL,
             protein_per_100g FLOAT NOT NULL DEFAULT 0,
             carbs_per_100g FLOAT NOT NULL DEFAULT 0,
@@ -138,12 +142,13 @@ def _migrate_name_unique_table(table_name: str) -> None:
         """
         copy_sql = """
         INSERT INTO ingredients_new (
-            id, user_id, name, calories_per_100g, protein_per_100g, carbs_per_100g, fat_per_100g, created_at
+            id, user_id, name, brand, calories_per_100g, protein_per_100g, carbs_per_100g, fat_per_100g, created_at
         )
         SELECT
             id,
             user_id,
             name,
+            COALESCE(brand, ''),
             calories_per_100g,
             COALESCE(protein_per_100g, 0),
             COALESCE(carbs_per_100g, 0),
@@ -151,7 +156,7 @@ def _migrate_name_unique_table(table_name: str) -> None:
             created_at
         FROM ingredients
         """
-        unique_name = "uq_ingredients_user_name"
+        unique_name = "uq_ingredients_user_name_brand"
     else:
         create_sql = """
         CREATE TABLE recipes_new (
@@ -175,6 +180,78 @@ def _migrate_name_unique_table(table_name: str) -> None:
         connection.execute(text(copy_sql))
         connection.execute(text(f"DROP TABLE {table_name}"))
         connection.execute(text(f"ALTER TABLE {table_name}_new RENAME TO {table_name}"))
-        connection.execute(text(f"CREATE UNIQUE INDEX {unique_name} ON {table_name}(user_id, name)"))
+        if table_name == "ingredients":
+            connection.execute(text(f"CREATE UNIQUE INDEX {unique_name} ON {table_name}(user_id, name, brand)"))
+        else:
+            connection.execute(text(f"CREATE UNIQUE INDEX {unique_name} ON {table_name}(user_id, name)"))
         connection.execute(text(f"CREATE INDEX ix_{table_name}_user_id ON {table_name}(user_id)"))
+        connection.execute(text("PRAGMA foreign_keys=ON"))
+
+
+def _migrate_ingredient_brand_unique() -> None:
+    inspector = inspect(engine)
+    if "ingredients" not in inspector.get_table_names():
+        return
+
+    ingredient_columns = {column["name"]: column for column in inspector.get_columns("ingredients")}
+    brand_is_nullable = ingredient_columns.get("brand", {}).get("nullable", True)
+    unique_constraints = inspector.get_unique_constraints("ingredients")
+    indexes = inspector.get_indexes("ingredients")
+    has_name_brand_unique = any(
+        constraint.get("column_names") == ["user_id", "name", "brand"]
+        for constraint in unique_constraints
+    ) or any(
+        index.get("unique") and index.get("column_names") == ["user_id", "name", "brand"]
+        for index in indexes
+    )
+    has_legacy_user_name_unique = any(
+        constraint.get("column_names") == ["user_id", "name"]
+        for constraint in unique_constraints
+    ) or any(
+        index.get("unique") and index.get("column_names") == ["user_id", "name"]
+        for index in indexes
+    )
+
+    if has_name_brand_unique and not has_legacy_user_name_unique and not brand_is_nullable:
+        return
+
+    create_sql = """
+    CREATE TABLE ingredients_new (
+        id INTEGER PRIMARY KEY,
+        user_id INTEGER,
+        name VARCHAR(120) NOT NULL,
+        brand VARCHAR(120) NOT NULL DEFAULT '',
+        calories_per_100g FLOAT NOT NULL,
+        protein_per_100g FLOAT NOT NULL DEFAULT 0,
+        carbs_per_100g FLOAT NOT NULL DEFAULT 0,
+        fat_per_100g FLOAT NOT NULL DEFAULT 0,
+        created_at DATETIME NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+    """
+    copy_sql = """
+    INSERT INTO ingredients_new (
+        id, user_id, name, brand, calories_per_100g, protein_per_100g, carbs_per_100g, fat_per_100g, created_at
+    )
+    SELECT
+        id,
+        user_id,
+        name,
+        COALESCE(brand, ''),
+        calories_per_100g,
+        COALESCE(protein_per_100g, 0),
+        COALESCE(carbs_per_100g, 0),
+        COALESCE(fat_per_100g, 0),
+        created_at
+    FROM ingredients
+    """
+
+    with engine.begin() as connection:
+        connection.execute(text("PRAGMA foreign_keys=OFF"))
+        connection.execute(text(create_sql))
+        connection.execute(text(copy_sql))
+        connection.execute(text("DROP TABLE ingredients"))
+        connection.execute(text("ALTER TABLE ingredients_new RENAME TO ingredients"))
+        connection.execute(text("CREATE UNIQUE INDEX uq_ingredients_user_name_brand ON ingredients(user_id, name, brand)"))
+        connection.execute(text("CREATE INDEX ix_ingredients_user_id ON ingredients(user_id)"))
         connection.execute(text("PRAGMA foreign_keys=ON"))

@@ -52,11 +52,12 @@ class User(Base):
 
 class Ingredient(Base):
     __tablename__ = "ingredients"
-    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_ingredients_user_name"),)
+    __table_args__ = (UniqueConstraint("user_id", "name", "brand", name="uq_ingredients_user_name_brand"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(120))
+    brand: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     calories_per_100g: Mapped[float] = mapped_column(Float)
     protein_per_100g: Mapped[float] = mapped_column(Float, default=0)
     carbs_per_100g: Mapped[float] = mapped_column(Float, default=0)

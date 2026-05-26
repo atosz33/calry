@@ -1,3 +1,4 @@
+import os
 from datetime import date, timedelta
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
@@ -59,6 +60,8 @@ from .schemas import (
     RecipeCreate,
     RecipeRead,
     ShoppingListItemCreate,
+    ShoppingListPurchaseRead,
+    ShoppingListPurchaseRequest,
     ShoppingListItemRead,
     UserRead,
     UserUpdate,
@@ -82,6 +85,20 @@ from .services import (
     serialize_recipe,
 )
 
+DEFAULT_CORS_ORIGINS = [
+    "http://localhost:8081",
+    "http://127.0.0.1:8081",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
+
+def get_cors_origins() -> list[str]:
+    raw_origins = os.getenv("CORS_ORIGINS", "")
+    origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+    return origins or DEFAULT_CORS_ORIGINS
+
+
 init_db()
 
 app = FastAPI(title="Calry API", version="0.1.0")
@@ -89,7 +106,7 @@ security = HTTPBearer(auto_error=False)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=get_cors_origins(),
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -301,6 +318,21 @@ def resolve_inventory_payload(
     return None, name, payload.amount_grams
 
 
+def normalize_optional_text(value: str | None) -> str:
+    if value is None:
+        return ""
+    stripped = value.strip()
+    return stripped
+
+
+def ingredient_duplicate_query(name: str, brand: str, ingredient_id: int | None = None):
+    conditions = [Ingredient.name.ilike(name.strip())]
+    conditions.append(Ingredient.brand.ilike(brand))
+    if ingredient_id is not None:
+        conditions.append(Ingredient.id != ingredient_id)
+    return select(Ingredient).where(*conditions)
+
+
 def add_inventory_item(
     current_user: User,
     ingredient_id: int | None,
@@ -333,6 +365,39 @@ def add_inventory_item(
     )
     db.add(item)
     return item
+
+
+def resolve_purchase_ingredient(
+    payload: ShoppingListPurchaseRequest,
+    db: Session,
+    current_user: User,
+) -> Ingredient | None:
+    if payload.ingredient_id is not None and payload.ingredient is not None:
+        raise HTTPException(status_code=400, detail="Choose either ingredient_id or ingredient")
+
+    if payload.ingredient_id is not None:
+        return get_ingredient(payload.ingredient_id, db)
+
+    if payload.ingredient is None:
+        return None
+
+    ingredient_payload = payload.ingredient
+    brand = normalize_optional_text(ingredient_payload.brand)
+    existing = db.scalar(ingredient_duplicate_query(ingredient_payload.name, brand))
+    if existing:
+        return existing
+
+    ingredient = Ingredient(
+        **{
+            **ingredient_payload.model_dump(exclude={"brand", "name"}),
+            "name": ingredient_payload.name.strip(),
+            "brand": brand,
+        },
+        user_id=current_user.id,
+    )
+    db.add(ingredient)
+    db.flush()
+    return ingredient
 
 
 def inventory_items_query(current_user: User):
@@ -566,6 +631,7 @@ def admin_list_ingredients(
             user_id=ingredient.user_id,
             user_email=email,
             name=ingredient.name,
+            brand=ingredient.brand,
             calories_per_100g=ingredient.calories_per_100g,
             protein_per_100g=ingredient.protein_per_100g,
             carbs_per_100g=ingredient.carbs_per_100g,
@@ -582,13 +648,15 @@ def admin_create_ingredient(
     db: Session = Depends(get_db),
     current_admin: User = Depends(get_current_admin),
 ) -> AdminIngredientRead:
-    duplicate = db.scalar(select(Ingredient).where(Ingredient.name.ilike(payload.name)))
+    brand = normalize_optional_text(payload.brand)
+    duplicate = db.scalar(ingredient_duplicate_query(payload.name, brand))
     if duplicate:
         raise HTTPException(status_code=400, detail="Ingredient already exists")
 
     ingredient = Ingredient(
         user_id=current_admin.id,
-        name=payload.name,
+        name=payload.name.strip(),
+        brand=brand,
         calories_per_100g=payload.calories_per_100g,
         protein_per_100g=payload.protein_per_100g,
         carbs_per_100g=payload.carbs_per_100g,
@@ -606,6 +674,7 @@ def admin_create_ingredient(
         user_id=ingredient.user_id,
         user_email=current_admin.email,
         name=ingredient.name,
+        brand=ingredient.brand,
         calories_per_100g=ingredient.calories_per_100g,
         protein_per_100g=ingredient.protein_per_100g,
         carbs_per_100g=ingredient.carbs_per_100g,
@@ -821,16 +890,30 @@ def create_shopping_list_item(
     return item
 
 
-@app.post("/shopping-list/{item_id}/purchase", status_code=204)
+@app.post("/shopping-list/{item_id}/purchase", response_model=ShoppingListPurchaseRead)
 def purchase_shopping_list_item(
     item_id: int,
+    payload: ShoppingListPurchaseRequest | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> None:
+) -> ShoppingListPurchaseRead:
     item = get_owned_shopping_item(item_id, current_user, db)
-    add_inventory_item(current_user, item.ingredient_id, item.name, item.amount_grams, db)
+    purchase_payload = payload or ShoppingListPurchaseRequest()
+    ingredient = resolve_purchase_ingredient(purchase_payload, db, current_user)
+    ingredient_id = ingredient.id if ingredient else item.ingredient_id
+    item_name = ingredient.name if ingredient else item.name
+    amount_grams = (
+        purchase_payload.amount_grams
+        if "amount_grams" in purchase_payload.model_fields_set
+        else item.amount_grams
+    )
+    inventory_item = add_inventory_item(current_user, ingredient_id, item_name, amount_grams, db)
     db.delete(item)
     db.commit()
+    db.refresh(inventory_item)
+    if ingredient:
+        db.refresh(ingredient)
+    return ShoppingListPurchaseRead(inventory_item=inventory_item, ingredient=ingredient)
 
 
 @app.delete("/shopping-list/{item_id}", status_code=204)
@@ -890,11 +973,19 @@ def create_ingredient(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Ingredient:
-    existing = db.scalar(select(Ingredient).where(Ingredient.name.ilike(payload.name)))
+    brand = normalize_optional_text(payload.brand)
+    existing = db.scalar(ingredient_duplicate_query(payload.name, brand))
     if existing:
         raise HTTPException(status_code=400, detail="Ingredient already exists")
 
-    ingredient = Ingredient(**payload.model_dump(), user_id=current_user.id)
+    ingredient = Ingredient(
+        **{
+            **payload.model_dump(exclude={"brand", "name"}),
+            "name": payload.name.strip(),
+            "brand": brand,
+        },
+        user_id=current_user.id,
+    )
     db.add(ingredient)
     try:
         db.commit()
@@ -913,16 +1004,13 @@ def update_ingredient(
     current_user: User = Depends(get_current_user),
 ) -> Ingredient:
     ingredient = get_ingredient(ingredient_id, db)
-    duplicate = db.scalar(
-        select(Ingredient).where(
-            Ingredient.name.ilike(payload.name),
-            Ingredient.id != ingredient_id,
-        )
-    )
+    brand = normalize_optional_text(payload.brand)
+    duplicate = db.scalar(ingredient_duplicate_query(payload.name, brand, ingredient_id))
     if duplicate:
         raise HTTPException(status_code=400, detail="Ingredient already exists")
 
-    ingredient.name = payload.name
+    ingredient.name = payload.name.strip()
+    ingredient.brand = brand
     ingredient.calories_per_100g = payload.calories_per_100g
     ingredient.protein_per_100g = payload.protein_per_100g
     ingredient.carbs_per_100g = payload.carbs_per_100g

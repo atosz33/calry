@@ -92,6 +92,7 @@ class AdminRecipeRead(BaseModel):
 
 class IngredientCreate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
+    brand: str | None = Field(default=None, max_length=120)
     calories_per_100g: float = Field(ge=0)
     protein_per_100g: float = Field(default=0, ge=0)
     carbs_per_100g: float = Field(default=0, ge=0)
@@ -141,6 +142,19 @@ class ShoppingListItemRead(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ShoppingListPurchaseRequest(BaseModel):
+    ingredient_id: int | None = None
+    ingredient: IngredientCreate | None = None
+    amount_grams: float | None = Field(default=None, gt=0, le=100000)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ShoppingListPurchaseRead(BaseModel):
+    inventory_item: InventoryItemRead
+    ingredient: IngredientRead | None = None
 
 
 class AdminIngredientRead(IngredientRead):
