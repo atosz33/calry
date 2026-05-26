@@ -60,6 +60,8 @@ from .schemas import (
     RecipeCreate,
     RecipeRead,
     ShoppingListItemCreate,
+    ShoppingListPurchaseRead,
+    ShoppingListPurchaseRequest,
     ShoppingListItemRead,
     UserRead,
     UserUpdate,
@@ -366,6 +368,39 @@ def add_inventory_item(
     )
     db.add(item)
     return item
+
+
+def resolve_purchase_ingredient(
+    payload: ShoppingListPurchaseRequest,
+    db: Session,
+    current_user: User,
+) -> Ingredient | None:
+    if payload.ingredient_id is not None and payload.ingredient is not None:
+        raise HTTPException(status_code=400, detail="Choose either ingredient_id or ingredient")
+
+    if payload.ingredient_id is not None:
+        return get_ingredient(payload.ingredient_id, db)
+
+    if payload.ingredient is None:
+        return None
+
+    ingredient_payload = payload.ingredient
+    brand = normalize_optional_text(ingredient_payload.brand)
+    existing = db.scalar(ingredient_duplicate_query(ingredient_payload.name, brand))
+    if existing:
+        return existing
+
+    ingredient = Ingredient(
+        **{
+            **ingredient_payload.model_dump(exclude={"brand", "name"}),
+            "name": ingredient_payload.name.strip(),
+            "brand": brand,
+        },
+        user_id=current_user.id,
+    )
+    db.add(ingredient)
+    db.flush()
+    return ingredient
 
 
 def inventory_items_query(current_user: User):
@@ -858,16 +893,30 @@ def create_shopping_list_item(
     return item
 
 
-@app.post("/shopping-list/{item_id}/purchase", status_code=204)
+@app.post("/shopping-list/{item_id}/purchase", response_model=ShoppingListPurchaseRead)
 def purchase_shopping_list_item(
     item_id: int,
+    payload: ShoppingListPurchaseRequest | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> None:
+) -> ShoppingListPurchaseRead:
     item = get_owned_shopping_item(item_id, current_user, db)
-    add_inventory_item(current_user, item.ingredient_id, item.name, item.amount_grams, db)
+    purchase_payload = payload or ShoppingListPurchaseRequest()
+    ingredient = resolve_purchase_ingredient(purchase_payload, db, current_user)
+    ingredient_id = ingredient.id if ingredient else item.ingredient_id
+    item_name = ingredient.name if ingredient else item.name
+    amount_grams = (
+        purchase_payload.amount_grams
+        if "amount_grams" in purchase_payload.model_fields_set
+        else item.amount_grams
+    )
+    inventory_item = add_inventory_item(current_user, ingredient_id, item_name, amount_grams, db)
     db.delete(item)
     db.commit()
+    db.refresh(inventory_item)
+    if ingredient:
+        db.refresh(ingredient)
+    return ShoppingListPurchaseRead(inventory_item=inventory_item, ingredient=ingredient)
 
 
 @app.delete("/shopping-list/{item_id}", status_code=204)

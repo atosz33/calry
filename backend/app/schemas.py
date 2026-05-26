@@ -144,6 +144,19 @@ class ShoppingListItemRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ShoppingListPurchaseRequest(BaseModel):
+    ingredient_id: int | None = None
+    ingredient: IngredientCreate | None = None
+    amount_grams: float | None = Field(default=None, gt=0, le=100000)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ShoppingListPurchaseRead(BaseModel):
+    inventory_item: InventoryItemRead
+    ingredient: IngredientRead | None = None
+
+
 class AdminIngredientRead(IngredientRead):
     user_id: int | None
     user_email: str | None

@@ -477,14 +477,14 @@ function App() {
 
     setSubmitting(`purchase:${id}`);
     try {
-      const inventoryItem = await api.createInventoryItem({
+      const purchase = await api.purchaseShoppingListItem(id, {
         ingredient_id: matchingIngredient.id,
-        name: null,
-        amount_grams: item.amount_grams ? Number(item.amount_grams) : null,
       });
-      await api.deleteShoppingListItem(id);
       setShoppingList((current) => current.filter((item) => item.id !== id));
-      setInventoryItems((current) => upsertById(current, inventoryItem));
+      if (purchase.ingredient) {
+        setIngredients((current) => upsertIngredient(current, purchase.ingredient));
+      }
+      setInventoryItems((current) => upsertById(current, purchase.inventory_item));
     } catch (submitError) {
       setError(submitError.message);
     } finally {
@@ -502,35 +502,16 @@ function App() {
     setSubmitting(`purchaseNutrition:${itemId}`);
     setError("");
     try {
-      let ingredient = findIngredientByName(
-        ingredients,
-        purchaseNutritionForm.name,
-        purchaseNutritionForm.brand
-      );
-      if (!ingredient) {
-        const payload = buildIngredientPayload(purchaseNutritionForm);
-        try {
-          ingredient = await api.createIngredient(payload);
-        } catch (createError) {
-          const freshIngredients = await api.listIngredients();
-          setIngredients(freshIngredients);
-          ingredient = findIngredientByName(freshIngredients, payload.name, payload.brand);
-          if (!ingredient) {
-            throw createError;
-          }
-        }
-      }
-
-      const inventoryItem = await api.createInventoryItem({
-        ingredient_id: ingredient.id,
-        name: null,
+      const purchase = await api.purchaseShoppingListItem(itemId, {
+        ingredient: buildIngredientPayload(purchaseNutritionForm),
         amount_grams: purchaseNutritionForm.amount_grams
           ? Number(purchaseNutritionForm.amount_grams)
           : null,
       });
-      await api.deleteShoppingListItem(itemId);
-      setIngredients((current) => upsertIngredient(current, ingredient));
-      setInventoryItems((current) => upsertById(current, inventoryItem));
+      if (purchase.ingredient) {
+        setIngredients((current) => upsertIngredient(current, purchase.ingredient));
+      }
+      setInventoryItems((current) => upsertById(current, purchase.inventory_item));
       setShoppingList((current) => current.filter((item) => item.id !== itemId));
       setPurchaseNutritionForm(null);
     } catch (submitError) {
@@ -2661,10 +2642,23 @@ function findIngredientByQuery(ingredients, query) {
   if (!normalizedQuery) {
     return null;
   }
-  return ingredients.find((ingredient) =>
-    normalizeSearchText(formatIngredientLabel(ingredient)).trim() === normalizedQuery ||
+  const labelMatch = ingredients.find((ingredient) =>
+    normalizeSearchText(formatIngredientLabel(ingredient)).trim() === normalizedQuery
+  );
+  if (labelMatch) {
+    return labelMatch;
+  }
+
+  const nameMatches = ingredients.filter((ingredient) =>
     normalizeSearchText(ingredient.name).trim() === normalizedQuery
-  ) || null;
+  );
+  const unbrandedMatches = nameMatches.filter((ingredient) =>
+    !normalizeSearchText(ingredient.brand || "").trim()
+  );
+  if (unbrandedMatches.length === 1) {
+    return unbrandedMatches[0];
+  }
+  return nameMatches.length === 1 ? nameMatches[0] : null;
 }
 
 function labelMealType(mealType, t) {
