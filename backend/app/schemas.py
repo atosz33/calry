@@ -92,6 +92,7 @@ class AdminRecipeRead(BaseModel):
 
 class IngredientCreate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
+    brand: str | None = Field(default=None, max_length=120)
     calories_per_100g: float = Field(ge=0)
     protein_per_100g: float = Field(default=0, ge=0)
     carbs_per_100g: float = Field(default=0, ge=0)

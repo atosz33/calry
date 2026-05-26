@@ -67,7 +67,7 @@ def serialize_recipe(recipe: Recipe) -> RecipeRead:
         RecipeIngredientRead(
             id=item.id,
             ingredient_id=item.ingredient_id,
-            ingredient_name=item.ingredient.name,
+            ingredient_name=ingredient_display_name(item.ingredient),
             amount_grams=item.amount_grams,
             calories=round(item.amount_grams * item.ingredient.calories_per_100g / 100, 2),
             protein=round(item.amount_grams * item.ingredient.protein_per_100g / 100, 2),
@@ -98,6 +98,10 @@ def serialize_recipe(recipe: Recipe) -> RecipeRead:
         ingredients=ingredients,
         created_at=recipe.created_at,
     )
+
+
+def ingredient_display_name(ingredient) -> str:
+    return f"{ingredient.name} ({ingredient.brand})" if ingredient.brand else ingredient.name
 
 
 def meal_entry_calories(entry: MealEntry) -> float:

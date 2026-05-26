@@ -6,7 +6,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -301,6 +301,24 @@ def resolve_inventory_payload(
     return None, name, payload.amount_grams
 
 
+def normalize_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def ingredient_duplicate_query(name: str, brand: str | None, ingredient_id: int | None = None):
+    conditions = [Ingredient.name.ilike(name.strip())]
+    if brand is None:
+        conditions.append(or_(Ingredient.brand.is_(None), Ingredient.brand == ""))
+    else:
+        conditions.append(Ingredient.brand.ilike(brand))
+    if ingredient_id is not None:
+        conditions.append(Ingredient.id != ingredient_id)
+    return select(Ingredient).where(*conditions)
+
+
 def add_inventory_item(
     current_user: User,
     ingredient_id: int | None,
@@ -566,6 +584,7 @@ def admin_list_ingredients(
             user_id=ingredient.user_id,
             user_email=email,
             name=ingredient.name,
+            brand=ingredient.brand,
             calories_per_100g=ingredient.calories_per_100g,
             protein_per_100g=ingredient.protein_per_100g,
             carbs_per_100g=ingredient.carbs_per_100g,
@@ -582,13 +601,15 @@ def admin_create_ingredient(
     db: Session = Depends(get_db),
     current_admin: User = Depends(get_current_admin),
 ) -> AdminIngredientRead:
-    duplicate = db.scalar(select(Ingredient).where(Ingredient.name.ilike(payload.name)))
+    brand = normalize_optional_text(payload.brand)
+    duplicate = db.scalar(ingredient_duplicate_query(payload.name, brand))
     if duplicate:
         raise HTTPException(status_code=400, detail="Ingredient already exists")
 
     ingredient = Ingredient(
         user_id=current_admin.id,
-        name=payload.name,
+        name=payload.name.strip(),
+        brand=brand,
         calories_per_100g=payload.calories_per_100g,
         protein_per_100g=payload.protein_per_100g,
         carbs_per_100g=payload.carbs_per_100g,
@@ -606,6 +627,7 @@ def admin_create_ingredient(
         user_id=ingredient.user_id,
         user_email=current_admin.email,
         name=ingredient.name,
+        brand=ingredient.brand,
         calories_per_100g=ingredient.calories_per_100g,
         protein_per_100g=ingredient.protein_per_100g,
         carbs_per_100g=ingredient.carbs_per_100g,
@@ -890,11 +912,19 @@ def create_ingredient(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Ingredient:
-    existing = db.scalar(select(Ingredient).where(Ingredient.name.ilike(payload.name)))
+    brand = normalize_optional_text(payload.brand)
+    existing = db.scalar(ingredient_duplicate_query(payload.name, brand))
     if existing:
         raise HTTPException(status_code=400, detail="Ingredient already exists")
 
-    ingredient = Ingredient(**payload.model_dump(), user_id=current_user.id)
+    ingredient = Ingredient(
+        **{
+            **payload.model_dump(exclude={"brand", "name"}),
+            "name": payload.name.strip(),
+            "brand": brand,
+        },
+        user_id=current_user.id,
+    )
     db.add(ingredient)
     try:
         db.commit()
@@ -913,16 +943,13 @@ def update_ingredient(
     current_user: User = Depends(get_current_user),
 ) -> Ingredient:
     ingredient = get_ingredient(ingredient_id, db)
-    duplicate = db.scalar(
-        select(Ingredient).where(
-            Ingredient.name.ilike(payload.name),
-            Ingredient.id != ingredient_id,
-        )
-    )
+    brand = normalize_optional_text(payload.brand)
+    duplicate = db.scalar(ingredient_duplicate_query(payload.name, brand, ingredient_id))
     if duplicate:
         raise HTTPException(status_code=400, detail="Ingredient already exists")
 
-    ingredient.name = payload.name
+    ingredient.name = payload.name.strip()
+    ingredient.brand = brand
     ingredient.calories_per_100g = payload.calories_per_100g
     ingredient.protein_per_100g = payload.protein_per_100g
     ingredient.carbs_per_100g = payload.carbs_per_100g

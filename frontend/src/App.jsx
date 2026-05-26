@@ -49,6 +49,7 @@ const emptyAuthForm = {
 
 const emptyIngredientForm = {
   name: "",
+  brand: "",
   calories_per_100g: "",
   protein_per_100g: "",
   carbs_per_100g: "",
@@ -60,6 +61,7 @@ const emptyInventoryForm = {
   ingredient_query: "",
   amount_grams: "",
   create_new: false,
+  brand: "",
   calories_per_100g: "",
   protein_per_100g: "",
   carbs_per_100g: "",
@@ -74,6 +76,18 @@ const emptyShoppingForm = {
 
 const emptyAdminIngredientForm = {
   name: "",
+  brand: "",
+  calories_per_100g: "",
+  protein_per_100g: "",
+  carbs_per_100g: "",
+  fat_per_100g: "",
+};
+
+const emptyPurchaseNutritionForm = {
+  item_id: "",
+  name: "",
+  brand: "",
+  amount_grams: "",
   calories_per_100g: "",
   protein_per_100g: "",
   carbs_per_100g: "",
@@ -139,10 +153,12 @@ function App() {
   const [ingredientForm, setIngredientForm] = useState(emptyIngredientForm);
   const [inventoryForm, setInventoryForm] = useState(emptyInventoryForm);
   const [shoppingForm, setShoppingForm] = useState(emptyShoppingForm);
+  const [purchaseNutritionForm, setPurchaseNutritionForm] = useState(null);
   const [adminIngredientForm, setAdminIngredientForm] = useState(emptyAdminIngredientForm);
   const [recipeForm, setRecipeForm] = useState(emptyRecipeForm);
   const [aiRecipeForm, setAiRecipeForm] = useState(emptyAiRecipeForm);
   const [recipeSuggestions, setRecipeSuggestions] = useState([]);
+  const [recipeIngredientActions, setRecipeIngredientActions] = useState({});
   const [mealForm, setMealForm] = useState(emptyMealForm);
   const [editingIngredientId, setEditingIngredientId] = useState(null);
   const [editingRecipeId, setEditingRecipeId] = useState(null);
@@ -396,6 +412,7 @@ function App() {
       if (!ingredientId && inventoryForm.create_new) {
         const createdIngredient = await api.createIngredient({
           name: inventoryForm.ingredient_query.trim(),
+          brand: inventoryForm.brand.trim() || null,
           calories_per_100g: Number(inventoryForm.calories_per_100g),
           protein_per_100g: Number(inventoryForm.protein_per_100g) || 0,
           carbs_per_100g: Number(inventoryForm.carbs_per_100g) || 0,
@@ -439,12 +456,83 @@ function App() {
   }
 
   async function handlePurchaseShoppingItem(id) {
+    setError("");
+    const item = shoppingList.find((shoppingItem) => shoppingItem.id === id);
+    if (!item) {
+      return;
+    }
+
+    const matchingIngredient = item.ingredient_id
+      ? ingredients.find((ingredient) => ingredient.id === item.ingredient_id)
+      : findIngredientByQuery(ingredients, item.name);
+    if (!matchingIngredient) {
+      setPurchaseNutritionForm({
+        ...emptyPurchaseNutritionForm,
+        item_id: String(item.id),
+        name: item.name,
+        amount_grams: item.amount_grams ? String(item.amount_grams) : "",
+      });
+      return;
+    }
+
     setSubmitting(`purchase:${id}`);
+    try {
+      const inventoryItem = await api.createInventoryItem({
+        ingredient_id: matchingIngredient.id,
+        name: null,
+        amount_grams: item.amount_grams ? Number(item.amount_grams) : null,
+      });
+      await api.deleteShoppingListItem(id);
+      setShoppingList((current) => current.filter((item) => item.id !== id));
+      setInventoryItems((current) => upsertById(current, inventoryItem));
+    } catch (submitError) {
+      setError(submitError.message);
+    } finally {
+      setSubmitting("");
+    }
+  }
+
+  async function handlePurchaseNutritionSubmit(event) {
+    event.preventDefault();
+    if (!purchaseNutritionForm) {
+      return;
+    }
+
+    const itemId = Number(purchaseNutritionForm.item_id);
+    setSubmitting(`purchaseNutrition:${itemId}`);
     setError("");
     try {
-      await api.purchaseShoppingListItem(id);
-      setShoppingList((current) => current.filter((item) => item.id !== id));
-      setInventoryItems(await api.listInventoryItems());
+      let ingredient = findIngredientByName(
+        ingredients,
+        purchaseNutritionForm.name,
+        purchaseNutritionForm.brand
+      );
+      if (!ingredient) {
+        const payload = buildIngredientPayload(purchaseNutritionForm);
+        try {
+          ingredient = await api.createIngredient(payload);
+        } catch (createError) {
+          const freshIngredients = await api.listIngredients();
+          setIngredients(freshIngredients);
+          ingredient = findIngredientByName(freshIngredients, payload.name, payload.brand);
+          if (!ingredient) {
+            throw createError;
+          }
+        }
+      }
+
+      const inventoryItem = await api.createInventoryItem({
+        ingredient_id: ingredient.id,
+        name: null,
+        amount_grams: purchaseNutritionForm.amount_grams
+          ? Number(purchaseNutritionForm.amount_grams)
+          : null,
+      });
+      await api.deleteShoppingListItem(itemId);
+      setIngredients((current) => upsertIngredient(current, ingredient));
+      setInventoryItems((current) => upsertById(current, inventoryItem));
+      setShoppingList((current) => current.filter((item) => item.id !== itemId));
+      setPurchaseNutritionForm(null);
     } catch (submitError) {
       setError(submitError.message);
     } finally {
@@ -539,6 +627,7 @@ function App() {
   async function handleSuggestRecipes() {
     setSubmitting("recipeAi");
     setError("");
+    setRecipeIngredientActions({});
     try {
       const suggestions = await api.suggestRecipes({
         only_existing_ingredients: aiRecipeForm.only_existing_ingredients,
@@ -546,6 +635,78 @@ function App() {
         language: i18n.language,
       });
       setRecipeSuggestions(suggestions);
+    } catch (submitError) {
+      setError(getAiErrorMessage(submitError, t));
+    } finally {
+      setSubmitting("");
+    }
+  }
+
+  async function handleAddSuggestedIngredient(suggestionIndex, ingredientIndex) {
+    const suggestedIngredient = recipeSuggestions[suggestionIndex]?.ingredients?.[ingredientIndex];
+    if (!suggestedIngredient || suggestedIngredient.ingredient_id) {
+      return;
+    }
+
+    const actionKey = `${suggestionIndex}:${ingredientIndex}`;
+    setSubmitting(`suggestedIngredient:${actionKey}`);
+    setError("");
+    try {
+      let ingredient = findIngredientByName(ingredients, suggestedIngredient.ingredient_name);
+      if (!ingredient) {
+        const nutrition = await api.suggestIngredientNutrition({
+          name: suggestedIngredient.ingredient_name,
+          language: i18n.language,
+        });
+        const payload = {
+          name: nutrition.name || suggestedIngredient.ingredient_name,
+          calories_per_100g: Number(nutrition.calories_per_100g) || 0,
+          protein_per_100g: Number(nutrition.protein_per_100g) || 0,
+          carbs_per_100g: Number(nutrition.carbs_per_100g) || 0,
+          fat_per_100g: Number(nutrition.fat_per_100g) || 0,
+        };
+
+        try {
+          ingredient = await api.createIngredient(payload);
+        } catch (createError) {
+          const freshIngredients = await api.listIngredients();
+          setIngredients(freshIngredients);
+          ingredient =
+            findIngredientByName(freshIngredients, payload.name) ||
+            findIngredientByName(freshIngredients, suggestedIngredient.ingredient_name);
+          if (!ingredient) {
+            throw createError;
+          }
+        }
+      }
+
+      const shoppingItem = await api.createShoppingListItem({
+        ingredient_id: ingredient.id,
+        name: ingredient.name,
+        amount_grams: suggestedIngredient.amount_grams ? Number(suggestedIngredient.amount_grams) : null,
+      });
+
+      setIngredients((current) => upsertIngredient(current, ingredient));
+      setShoppingList((current) => [shoppingItem, ...current]);
+      setRecipeSuggestions((current) =>
+        current.map((suggestion, currentSuggestionIndex) =>
+          currentSuggestionIndex === suggestionIndex
+            ? {
+                ...suggestion,
+                ingredients: suggestion.ingredients.map((item, currentIngredientIndex) =>
+                  currentIngredientIndex === ingredientIndex
+                    ? {
+                        ...item,
+                        ingredient_id: ingredient.id,
+                        ingredient_name: ingredient.name,
+                      }
+                    : item
+                ),
+              }
+            : suggestion
+        )
+      );
+      setRecipeIngredientActions((current) => ({ ...current, [actionKey]: "done" }));
     } catch (submitError) {
       setError(getAiErrorMessage(submitError, t));
     } finally {
@@ -714,6 +875,7 @@ function App() {
     setEditingIngredientId(ingredient.id);
     setIngredientForm({
       name: ingredient.name,
+      brand: ingredient.brand || "",
       calories_per_100g: String(ingredient.calories_per_100g),
       protein_per_100g: String(ingredient.protein_per_100g),
       carbs_per_100g: String(ingredient.carbs_per_100g),
@@ -773,10 +935,7 @@ function App() {
           ? {
               ...item,
               ingredient_query: value,
-              ingredient_id:
-                ingredients.find(
-                  (ingredient) => ingredient.name.toLocaleLowerCase() === value.toLocaleLowerCase()
-                )?.id || "",
+              ingredient_id: findIngredientByQuery(ingredients, value)?.id || "",
             }
           : item
       ),
@@ -784,9 +943,7 @@ function App() {
   }
 
   function updateInventoryIngredientQuery(value) {
-    const match = ingredients.find(
-      (ingredient) => ingredient.name.toLocaleLowerCase() === value.toLocaleLowerCase()
-    );
+    const match = findIngredientByQuery(ingredients, value);
     setInventoryForm((current) => ({
       ...current,
       ingredient_query: value,
@@ -796,9 +953,7 @@ function App() {
   }
 
   function updateShoppingIngredientQuery(value) {
-    const match = ingredients.find(
-      (ingredient) => ingredient.name.toLocaleLowerCase() === value.toLocaleLowerCase()
-    );
+    const match = findIngredientByQuery(ingredients, value);
     setShoppingForm((current) => ({
       ...current,
       ingredient_query: value,
@@ -1119,7 +1274,7 @@ function App() {
                       <article className="recipe-card" key={ingredient.id}>
                         <div className="recipe-card-head">
                           <div>
-                            <h3>{ingredient.name}</h3>
+                            <h3>{formatIngredientLabel(ingredient)}</h3>
                             <p>{t("recipes.caloriesPer100g", { value: ingredient.calories_per_100g })}</p>
                             <MacroSummary
                               values={{
@@ -1183,6 +1338,15 @@ function App() {
                       </button>
                     </div>
                   </Field>
+                  <Field label={t("fields.brandOptional")}>
+                    <input
+                      placeholder={t("placeholders.brand")}
+                      value={ingredientForm.brand}
+                      onChange={(event) =>
+                        setIngredientForm({ ...ingredientForm, brand: event.target.value })
+                      }
+                    />
+                  </Field>
                   <Field label={t("fields.caloriesPer100g")}>
                     <input
                       type="number"
@@ -1228,7 +1392,7 @@ function App() {
                       <article className="recipe-card" key={item.id}>
                         <div className="recipe-card-head">
                           <div>
-                            <h3>{item.name}</h3>
+                            <h3>{formatShoppingItemName(item, ingredients)}</h3>
                             <p>{formatInventoryAmount(item.amount_grams, t)}</p>
                           </div>
                           <button
@@ -1260,7 +1424,7 @@ function App() {
                     />
                     <datalist id="inventory-ingredient-options">
                       {findMatchingIngredients(ingredients, inventoryForm.ingredient_query).map((ingredient) => (
-                        <option key={ingredient.id} value={ingredient.name} />
+                        <option key={ingredient.id} value={formatIngredientLabel(ingredient)} />
                       ))}
                     </datalist>
                   </Field>
@@ -1278,6 +1442,15 @@ function App() {
                   ) : null}
                   {inventoryForm.create_new && !inventoryForm.ingredient_id ? (
                     <>
+                      <Field label={t("fields.brandOptional")}>
+                        <input
+                          placeholder={t("placeholders.brand")}
+                          value={inventoryForm.brand}
+                          onChange={(event) =>
+                            setInventoryForm({ ...inventoryForm, brand: event.target.value })
+                          }
+                        />
+                      </Field>
                       <Field label={t("fields.caloriesPer100g")}>
                         <input
                           type="number"
@@ -1323,7 +1496,7 @@ function App() {
                       <article className="recipe-card" key={item.id}>
                         <div className="recipe-card-head">
                           <div>
-                            <h3>{item.name}</h3>
+                            <h3>{formatShoppingItemName(item, ingredients)}</h3>
                             <p>{formatInventoryAmount(item.amount_grams, t)}</p>
                           </div>
                           <div className="inline-actions">
@@ -1369,7 +1542,7 @@ function App() {
                     />
                     <datalist id="shopping-ingredient-options">
                       {findMatchingIngredients(ingredients, shoppingForm.ingredient_query).map((ingredient) => (
-                        <option key={ingredient.id} value={ingredient.name} />
+                        <option key={ingredient.id} value={formatIngredientLabel(ingredient)} />
                       ))}
                     </datalist>
                   </Field>
@@ -1558,6 +1731,40 @@ function App() {
                           {suggestion.instructions ? (
                             <p className="recipe-instructions">{suggestion.instructions}</p>
                           ) : null}
+                          <div className="suggested-ingredient-list">
+                            {suggestion.ingredients.map((ingredient, ingredientIndex) => {
+                              const actionKey = `${index}:${ingredientIndex}`;
+                              const isWorking = submitting === `suggestedIngredient:${actionKey}`;
+                              return (
+                                <div
+                                  className="suggested-ingredient-row"
+                                  key={`${suggestion.name}-${ingredient.ingredient_name}-${ingredientIndex}`}
+                                >
+                                  <span>
+                                    {ingredient.ingredient_name} · {Math.round(ingredient.amount_grams)}{" "}
+                                    {t("common.gramsShort")}
+                                  </span>
+                                  {ingredient.ingredient_id ? (
+                                    <span className="saved-pill">
+                                      {recipeIngredientActions[actionKey] === "done"
+                                        ? t("ai.addedIngredient")
+                                        : t("ai.savedIngredient")}
+                                    </span>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      className="secondary-button compact-button"
+                                      onClick={() => handleAddSuggestedIngredient(index, ingredientIndex)}
+                                      disabled={!user.ai_enabled || isWorking}
+                                      title={user.ai_enabled ? t("ai.addIngredientAndShopping") : t("ai.disabled")}
+                                    >
+                                      {isWorking ? t("ai.addingIngredient") : t("ai.addIngredientAndShopping")}
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
                         </article>
                       ))}
                     </div>
@@ -1619,7 +1826,7 @@ function App() {
                             />
                             <datalist id={`recipe-ingredient-options-${index}`}>
                               {matchingIngredients.map((ingredient) => (
-                                <option key={ingredient.id} value={ingredient.name} />
+                                <option key={ingredient.id} value={formatIngredientLabel(ingredient)} />
                               ))}
                             </datalist>
                           </Field>
@@ -1925,6 +2132,74 @@ function App() {
           />
         ) : null}
 
+        {purchaseNutritionForm ? (
+          <div className="modal-backdrop" role="presentation">
+            <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="purchase-nutrition-title">
+              <div className="panel-head">
+                <div>
+                  <h2 id="purchase-nutrition-title">{t("shopping.nutritionTitle")}</h2>
+                  <p>{purchaseNutritionForm.name}</p>
+                </div>
+              </div>
+              <form className="stack-form" onSubmit={handlePurchaseNutritionSubmit}>
+                <Field label={t("fields.ingredientName")}>
+                  <input
+                    value={purchaseNutritionForm.name}
+                    onChange={(event) =>
+                      setPurchaseNutritionForm({ ...purchaseNutritionForm, name: event.target.value })
+                    }
+                    required
+                  />
+                </Field>
+                <Field label={t("fields.brandOptional")}>
+                  <input
+                    placeholder={t("placeholders.brand")}
+                    value={purchaseNutritionForm.brand}
+                    onChange={(event) =>
+                      setPurchaseNutritionForm({ ...purchaseNutritionForm, brand: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field label={t("fields.caloriesPer100g")}>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    placeholder={t("placeholders.caloriesPer100g")}
+                    value={purchaseNutritionForm.calories_per_100g}
+                    onChange={(event) =>
+                      setPurchaseNutritionForm({
+                        ...purchaseNutritionForm,
+                        calories_per_100g: event.target.value,
+                      })
+                    }
+                    required
+                  />
+                </Field>
+                <MacroInputs
+                  form={purchaseNutritionForm}
+                  setForm={setPurchaseNutritionForm}
+                  t={t}
+                  required
+                />
+                <div className="inline-actions">
+                  <button
+                    type="submit"
+                    disabled={submitting === `purchaseNutrition:${purchaseNutritionForm.item_id}`}
+                  >
+                    {submitting === `purchaseNutrition:${purchaseNutritionForm.item_id}`
+                      ? t("common.saving")
+                      : t("shopping.confirmPurchase")}
+                  </button>
+                  <button type="button" className="ghost-button" onClick={() => setPurchaseNutritionForm(null)}>
+                    {t("common.cancel")}
+                  </button>
+                </div>
+              </form>
+            </section>
+          </div>
+        ) : null}
+
         <section className="footer-actions">
           <button type="button" className="ghost-button footer-action-button" onClick={() => setCurrentView("reports")}>
             {t("common.report")}
@@ -2018,6 +2293,7 @@ function AdminPanel({
                 <AdminTable
                   columns={[
                     t("fields.ingredientName"),
+                    t("fields.brand"),
                     t("fields.caloriesPer100g"),
                     t("macros.title"),
                     t("fields.email"),
@@ -2025,6 +2301,7 @@ function AdminPanel({
                   ]}
                   rows={data.ingredients.map((item) => [
                     item.name,
+                    item.brand || "-",
                     `${item.calories_per_100g} ${t("common.kcal")}`,
                     formatMacroText(item, t, "_per_100g", t("macros.per100gSuffix")),
                     item.user_email || "-",
@@ -2045,6 +2322,15 @@ function AdminPanel({
                         setIngredientForm({ ...ingredientForm, name: event.target.value })
                       }
                       required
+                    />
+                  </Field>
+                  <Field label={t("fields.brandOptional")}>
+                    <input
+                      placeholder={t("placeholders.brand")}
+                      value={ingredientForm.brand}
+                      onChange={(event) =>
+                        setIngredientForm({ ...ingredientForm, brand: event.target.value })
+                      }
                     />
                   </Field>
                   <Field label={t("fields.caloriesPer100g")}>
@@ -2226,7 +2512,7 @@ function Field({ label, children }) {
   );
 }
 
-function MacroInputs({ form, setForm, t }) {
+function MacroInputs({ form, setForm, t, required = false }) {
   return (
     <div className="macro-input-grid">
       {macroFields.map((macro) => (
@@ -2238,6 +2524,7 @@ function MacroInputs({ form, setForm, t }) {
             placeholder={t(`placeholders.${macro.field}`)}
             value={form[macro.field]}
             onChange={(event) => setForm({ ...form, [macro.field]: event.target.value })}
+            required={required}
           />
         </Field>
       ))}
@@ -2326,6 +2613,17 @@ function formatIngredientNames(ingredients) {
     .join(", ");
 }
 
+function formatIngredientLabel(ingredient) {
+  return ingredient?.brand ? `${ingredient.name} (${ingredient.brand})` : ingredient?.name || "";
+}
+
+function formatShoppingItemName(item, ingredients) {
+  const ingredient = item.ingredient_id
+    ? ingredients.find((currentIngredient) => currentIngredient.id === item.ingredient_id)
+    : null;
+  return ingredient ? formatIngredientLabel(ingredient) : item.name;
+}
+
 function formatInventoryAmount(amount, t) {
   return amount ? t("inventory.amountValue", { value: Math.round(amount) }) : t("inventory.unknownAmount");
 }
@@ -2336,6 +2634,37 @@ function upsertById(items, nextItem) {
     return items.map((item) => (item.id === nextItem.id ? nextItem : item));
   }
   return [nextItem, ...items];
+}
+
+function upsertIngredient(items, nextItem) {
+  const exists = items.some((item) => item.id === nextItem.id);
+  const nextItems = exists
+    ? items.map((item) => (item.id === nextItem.id ? nextItem : item))
+    : [...items, nextItem];
+  return nextItems.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function findIngredientByName(ingredients, name, brand = "") {
+  const normalizedName = normalizeSearchText(name).trim();
+  const normalizedBrand = normalizeSearchText(brand || "").trim();
+  if (!normalizedName) {
+    return null;
+  }
+  return ingredients.find((ingredient) =>
+    normalizeSearchText(ingredient.name).trim() === normalizedName &&
+    normalizeSearchText(ingredient.brand || "").trim() === normalizedBrand
+  ) || null;
+}
+
+function findIngredientByQuery(ingredients, query) {
+  const normalizedQuery = normalizeSearchText(query).trim();
+  if (!normalizedQuery) {
+    return null;
+  }
+  return ingredients.find((ingredient) =>
+    normalizeSearchText(formatIngredientLabel(ingredient)).trim() === normalizedQuery ||
+    normalizeSearchText(ingredient.name).trim() === normalizedQuery
+  ) || null;
 }
 
 function labelMealType(mealType, t) {
@@ -2350,7 +2679,7 @@ function findMatchingIngredients(ingredients, query) {
   }
 
   return ingredients
-    .filter((ingredient) => normalizeSearchText(ingredient.name).includes(normalizedQuery))
+    .filter((ingredient) => normalizeSearchText(formatIngredientLabel(ingredient)).includes(normalizedQuery))
     .slice(0, 50);
 }
 
@@ -2417,7 +2746,8 @@ function findMealEntryCalories(mealEntryId, dashboard) {
 
 function buildIngredientPayload(form) {
   return {
-    name: form.name,
+    name: form.name.trim(),
+    brand: form.brand?.trim() || null,
     calories_per_100g: Number(form.calories_per_100g),
     protein_per_100g: Number(form.protein_per_100g || 0),
     carbs_per_100g: Number(form.carbs_per_100g || 0),

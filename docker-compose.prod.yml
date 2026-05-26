@@ -10,8 +10,8 @@ services:
       DATABASE_URL: sqlite:////data/calry.db
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.1-flash-preview}
-    expose:
-      - "5001"
+    ports:
+      - "127.0.0.1:5001:5001"
 
   frontend:
     build:
