@@ -225,7 +225,8 @@ def _migrate_ingredient_brand_unique() -> None:
         protein_per_100g FLOAT NOT NULL DEFAULT 0,
         carbs_per_100g FLOAT NOT NULL DEFAULT 0,
         fat_per_100g FLOAT NOT NULL DEFAULT 0,
-        created_at DATETIME NOT NULL
+        created_at DATETIME NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id)
     )
     """
     copy_sql = """
