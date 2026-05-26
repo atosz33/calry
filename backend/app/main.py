@@ -1,3 +1,4 @@
+import os
 from datetime import date, timedelta
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
@@ -82,6 +83,20 @@ from .services import (
     serialize_recipe,
 )
 
+DEFAULT_CORS_ORIGINS = [
+    "http://localhost:8081",
+    "http://127.0.0.1:8081",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
+
+def get_cors_origins() -> list[str]:
+    raw_origins = os.getenv("CORS_ORIGINS", "")
+    origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+    return origins or DEFAULT_CORS_ORIGINS
+
+
 init_db()
 
 app = FastAPI(title="Calry API", version="0.1.0")
@@ -89,7 +104,7 @@ security = HTTPBearer(auto_error=False)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=get_cors_origins(),
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],

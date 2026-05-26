@@ -11,6 +11,7 @@ on:
 jobs:
   make-admin:
     runs-on: ubuntu-latest
+    environment: production
 
     steps:
       - name: Install SSH tools
